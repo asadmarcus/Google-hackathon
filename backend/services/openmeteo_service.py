@@ -111,16 +111,16 @@ class OpenMeteoService:
             return []
 
 
-    async def fetch_7day_daily_forecast(self, zone: Dict) -> List[Dict]:
+    async def fetch_16day_daily_forecast(self, zone: Dict) -> List[Dict]:
         """
-        Fetch structured 7-day daily forecast for Agent 3.
-        Returns actual meteorological predictions (NOT monthly averages).
+        Fetch structured 16-day daily forecast for Agent 3.
+        Returns actual meteorological predictions from ECMWF/GFS models.
         
         This is the KEY data source for accurate short-term predictions.
         Open-Meteo uses ECMWF/GFS weather models — same as national met offices.
         
         Returns:
-            List of 7 dicts: [{"day": 1, "temp_max": 43.2, "rain_mm": 0, "humidity": 45, "wind_kph": 12}, ...]
+            List of 16 dicts: [{"day": 1, "temp_max": 43.2, "rain_mm": 0, "humidity": 45, "wind_kph": 12}, ...]
         """
         try:
             response = await self.client.get(
@@ -130,7 +130,7 @@ class OpenMeteoService:
                     "longitude": zone["lng"],
                     "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,relative_humidity_2m_max,relative_humidity_2m_min,wind_speed_10m_max",
                     "timezone": "Asia/Karachi",
-                    "forecast_days": 7,
+                    "forecast_days": 16,
                 }
             )
             response.raise_for_status()
@@ -160,11 +160,11 @@ class OpenMeteoService:
                     "wind_kph": round(wind, 1),
                 })
             
-            logger.info(f"  7-day forecast for {zone['name']}: temps {[d['temp_max'] for d in forecast_days]}")
+            logger.info(f"  16-day forecast for {zone['name']}: {len(forecast_days)} days, temps {[d['temp_max'] for d in forecast_days[:7]]}")
             return forecast_days
             
         except Exception as e:
-            logger.error(f"  Failed to fetch 7-day forecast for {zone['name']}: {e}")
+            logger.error(f"  Failed to fetch 16-day forecast for {zone['name']}: {e}")
             return []
 
 

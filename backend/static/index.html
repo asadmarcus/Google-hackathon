@@ -141,7 +141,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 
 <div class="grid" id="stats">
   <div class="stat-card"><div class="label">Signals Stored</div><div class="value" id="stat-signals">—</div><div class="sub">30-day buffer</div></div>
-  <div class="stat-card"><div class="label">Zones Active</div><div class="value" id="stat-zones">5</div><div class="sub">Pakistan</div></div>
+  <div class="stat-card"><div class="label">Zones Active</div><div class="value" id="stat-zones">8</div><div class="sub">Pakistan</div></div>
   <div class="stat-card"><div class="label">Last Fetch</div><div class="value" id="stat-last-fetch" style="font-size:14px">Never</div><div class="sub">Auto: every 15 min</div></div>
   <div class="stat-card"><div class="label">Max Severity</div><div class="value" id="stat-max-sev">—</div><div class="sub">Current 24h</div></div>
 </div>
@@ -226,9 +226,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 <script>
 const API2 = window.location.origin + '/api/v1/agent2';
 const API3 = window.location.origin + '/api/v1/agent3';
-const zones = ['islamabad-g10', 'lahore-city', 'karachi-south', 'peshawar-city', 'multan-city'];
-const zoneNames = {'islamabad-g10':'G-10, Islamabad','lahore-city':'Lahore City','karachi-south':'Karachi South','peshawar-city':'Peshawar City','multan-city':'Multan City'};
-const zoneProvinces = {'islamabad-g10':'Federal','lahore-city':'Punjab','karachi-south':'Sindh','peshawar-city':'KPK','multan-city':'Punjab'};
+const zones = ['islamabad-g10', 'lahore-city', 'karachi-south', 'peshawar-city', 'multan-city', 'jacobabad-city', 'sukkur-city', 'quetta-city'];
+const zoneNames = {'islamabad-g10':'G-10, Islamabad','lahore-city':'Lahore City','karachi-south':'Karachi South','peshawar-city':'Peshawar City','multan-city':'Multan City','jacobabad-city':'Jacobabad City','sukkur-city':'Sukkur City','quetta-city':'Quetta City'};
+const zoneProvinces = {'islamabad-g10':'Federal','lahore-city':'Punjab','karachi-south':'Sindh','peshawar-city':'KPK','multan-city':'Punjab','jacobabad-city':'Sindh','sukkur-city':'Sindh','quetta-city':'Balochistan'};
 let selectedZone = 'islamabad-g10';
 let currentTab = 'signals';
 

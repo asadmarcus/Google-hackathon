@@ -2,530 +2,327 @@
 
 ## Complete Technical Documentation
 
-> **Purpose**: Consume Agent 2's real-time feature vectors and output 30-day day-by-day flood and heatstroke risk forecasts for Pakistani urban zones using XGBoost.
+> **Purpose**: Predict 30-day flood and heatstroke risk for Pakistani urban zones using a dual-model ML architecture: Prophet (weather forecasting) + XGBoost (flood classification).
 
 ---
 
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                       AGENT 3: ML Predictor                          │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  INPUT                      PROCESSING              OUTPUT           │
-│  ──────────────────        ──────────────          ──────────        │
-│                                                                      │
-│  ┌─────────────────┐                                                 │
-│  │ Agent 2         │──┐    ┌──────────────┐    ┌──────────────────┐ │
-│  │ /features       │  │    │ Feature      │    │ /predict/{zone}  │ │
-│  │ (16 features)   │  │    │ Projector    │    │ → 30-day array   │ │
-│  └─────────────────┘  ├───▶│ (day 1-30   │───▶│ [{day,flood,heat}│ │
-│  ┌─────────────────┐  │    │  per day)   │    │  ...]            │ │
-│  │ Agent 2         │──┘    └──────┬───────┘    └──────────────────┘ │
-│  │ /flood-forecast │             │                                   │
-│  │ (GloFAS 30-day) │    ┌────────▼───────┐    ┌──────────────────┐ │
-│  └─────────────────┘    │  XGBoost       │    │ /model/info      │ │
-│                         │  flood_model   │───▶│ → accuracy/meta  │ │
-│  ┌─────────────────┐    │  heat_model    │    └──────────────────┘ │
-│  │ Training Data   │───▶│  (joblib       │                          │
-│  │ (CSV or synth.) │    │   bundle)      │    ┌──────────────────┐ │
-│  └─────────────────┘    └────────────────┘    │ /backtest        │ │
-│                                               │ → historical     │ │
-│  ┌─────────────────┐                          │   accuracy       │ │
-│  │ models/         │ ◀── save/load ──────────▶└──────────────────┘ │
-│  │ flood_model     │                                                 │
-│  │ .joblib         │                                                 │
-│  └─────────────────┘                                                 │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                       AGENT 3: ML Predictor                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  INPUTS (from Agent 2)          ML PIPELINE              OUTPUT          │
+│  ─────────────────────         ────────────             ──────────       │
+│                                                                          │
+│  /forecast/{zone}     ──→  ┌─────────────────┐                          │
+│  (16-day ECMWF/GFS)        │  Days 1-16:     │                          │
+│                             │  Real Forecast  │──┐                       │
+│  /flood-forecast/{zone}     │  (Open-Meteo)   │  │                       │
+│  (30-day GloFAS)            └─────────────────┘  │                       │
+│                                                  ├──→ XGBoost ──→ Flood  │
+│  /features/{zone}     ──→  ┌─────────────────┐  │    Classifier   Risk  │
+│  (current conditions)       │  Days 17-30:    │  │                       │
+│                             │  Prophet ML     │──┘    PMD Heat ──→ Heat  │
+│  Training Data (GEE)  ──→  │  (22yr trained) │       Engine       Risk  │
+│  8000 days/province         └─────────────────┘                          │
+│                                                                          │
+│  OUTPUT: POST /api/v1/agent3/predict/{zone_id}                          │
+│  → 30 DayPrediction objects + PredictionSummary                         │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## File Structure
+## ML Models
 
-```
-backend/
-├── agents/
-│   ├── agent_predictor.py         # Agent 3 router — all endpoints + ML logic
-│   └── agent_data_collector.py    # Agent 2 (upstream data provider)
-├── models/
-│   └── flood_model.joblib         # Trained model bundle (auto-created on first run)
-├── data/
-│   ├── signals.db                 # Agent 2 SQLite store
-│   └── training/                  # Drop Kaggle CSV files here
-│       ├── FloodPrediction.csv    # (optional) n-gauhar/Flood-prediction on GitHub
-│       ├── flood_prediction_dataset.csv  # (optional) Kaggle: naiyakhalid
-│       └── pakistan_flood_disasters.csv  # (optional) Kaggle: alitaqishah
-└── config/
-    └── settings.py                # AGENT2_BASE_URL setting
-```
+### Model 1: Prophet Weather Forecaster
+
+**Purpose**: Predict daily temperature and rainfall for days 17-30 (beyond ECMWF forecast horizon).
+
+| Property | Value |
+|----------|-------|
+| Library | Facebook Prophet 1.1.5 |
+| Type | Additive time series decomposition |
+| Training data | Google Earth Engine daily data (MODIS LST + CHIRPS/GPM) |
+| Training samples | ~7,900 days per province (Feb 2000 — Dec 2021) |
+| Models | 12 total (6 provinces × 2 variables: temp + rain) |
+| Seasonality | Yearly (Fourier) + semi-annual (captures monsoon double-peak) |
+| Outputs | Predicted value + 80% confidence interval (upper/lower bounds) |
+| Conditioning | Last 7 days of real ECMWF forecast used to detect current anomaly |
+| Caching | Trained once, serialized to `.pkl` files in `models/prophet/` |
+| Training time | ~15-20s first call, then instant from cache |
+
+**How it works:**
+1. Loads daily Temp.csv + Pre.csv from each province's GEE directory
+2. Converts GEE precipitation from meters/day → mm/day
+3. Fits Prophet with yearly + semi-annual seasonality
+4. At prediction time: generates future dates → predict → apply anomaly conditioning
+5. Anomaly conditioning: compares last 7 real days vs Prophet's expectation, applies decaying offset
+
+**File**: `services/weather_forecaster.py`
 
 ---
 
-## Model Bundle
+### Model 2: XGBoost Flood Classifier
 
-`flood_model.joblib` stores a single Python dict:
+**Purpose**: Given weather conditions (temp, rain, NDSI, NDVI, month, province), predict flood probability.
+
+| Property | Value |
+|----------|-------|
+| Library | XGBoost 2.1.0 (XGBClassifier) |
+| Training data | 6 province CSVs from GEE (1,572 rows, 60 real flood events) |
+| Features | Month, Temp, Rain(mm), Ice (NDSI), Veg (NDVI), Province_enc |
+| Flood rate | 3.8% (realistic for Pakistan — floods are rare events) |
+| Output | `predict_proba()[0][1]` → flood probability 0.0-1.0 |
+| Saved to | `models/flood_model.joblib` |
+
+**CRITICAL — Rain_mm input**:
+The model was trained on **monthly rainfall totals** (e.g., Punjab July = 97mm → flood).
+At inference, we feed **cumulative rainfall to date** (antecedent moisture), NOT daily×30:
 
 ```python
-{
-    "flood": XGBClassifier,   # predicts flood probability (0-1)
-    "heat":  XGBClassifier,   # predicts heatstroke probability (0-1)
-    "meta": {
-        "model_version": "1.0.0",
-        "training_date": "2025-05-18T...",
-        "training_samples": 6000,
-        "training_source": "synthetic_pakistan_calibrated",
-        "flood_auc": 0.94,
-        "flood_accuracy": 0.89,
-        "heat_auc": 0.96,
-        "heat_accuracy": 0.91,
-        "flood_features": [...],
-        "heat_features": [...],
-    }
-}
+# Day 1:  cumulative = 0mm → XGBoost sees dry conditions → ~2% flood
+# Day 15: cumulative = 5mm → still dry → ~3% flood  
+# Day 25: cumulative = 60mm → saturated soil → ~30% flood
+# Day 30: cumulative = 90mm → monsoon month → ~55% flood
 ```
+
+This models the physics: floods happen **after sustained rain accumulates**, not because it drizzled 1mm today.
+
+**Per-day modulation** (on top of base XGBoost probability):
+- GloFAS discharge > 2.0× normal → +50% boost
+- GloFAS discharge > 1.5× normal → +20% boost
+- GloFAS discharge < 0.8× normal → -50% reduction
+- Daily rain > 50mm → +30% acute event bonus
+- Daily rain > 30mm → +15% acute event bonus
 
 ---
 
-## Lazy Training
+### Model 3: PMD Heat Risk Engine (Rule-Based)
 
-The model trains **once on first use** (not at app startup) to avoid blocking uvicorn boot.
+**Purpose**: Estimate heatstroke risk based on Pakistan Meteorological Department advisory thresholds.
 
-**Timeline:**
-- First `POST /predict/{zone}` call → acquires async lock → trains in thread pool (~20-30s) → saves to `models/flood_model.joblib` → releases lock → all subsequent calls use cached model
-- Server restart → loads `flood_model.joblib` from disk (instant)
-- `POST /retrain` → deletes existing bundle, retrains in background
+This is **NOT ML** — it's explicitly a rule-based engine calibrated to official PMD criteria. Labeled honestly.
 
-**Training sources (in priority order):**
-1. CSVs in `backend/data/training/` (see schemas below)
-2. Pakistan-calibrated synthetic data (auto-generated, always available)
+| Temp Range | PMD Level | Base Risk |
+|-----------|-----------|-----------|
+| < 35°C | Normal | 0% |
+| 35-38°C | Warm | 3-10% |
+| 38-40°C | Hot | 10-20% |
+| 40-42°C | Very Hot | 20-40% |
+| 42-44°C | PMD Advisory | 40-80% |
+| 44-46°C | Danger | 80-90% |
+| 46°C+ | Extreme | 90-95% |
 
----
+**Zone multipliers** (geographic reality):
+| Zone | Multiplier | Reason |
+|------|-----------|--------|
+| jacobabad-city | 1.0 | Hottest city in Pakistan (52°C recorded) |
+| multan-city | 0.95 | Interior Punjab extreme heat zone |
+| sukkur-city | 0.85 | Upper Sindh heat corridor |
+| lahore-city | 0.75 | Punjab interior, active heatwave zone |
+| peshawar-city | 0.55 | Warm but drier |
+| islamabad-g10 | 0.4 | Higher elevation (507m), cooler |
+| karachi-south | 0.35 | Coastal, ocean-moderated |
+| quetta-city | 0.3 | High altitude (1680m), much cooler |
 
-## Feature Vectors
-
-### Flood Model Features (11)
-
-| Feature | Unit | Source |
-|---------|------|--------|
-| `cumulative_rain_7d` | mm | Agent 2 computed |
-| `cumulative_rain_14d` | mm | Agent 2 computed |
-| `cumulative_rain_30d` | mm | Agent 2 computed |
-| `rain_intensity_24h` | mm | Agent 2 computed |
-| `avg_humidity_24h` | % | Agent 2 computed |
-| `terrain_elevation` | m | Zone static (settings.py) |
-| `drainage_capacity` | 0-1 | Zone static (settings.py) |
-| `is_monsoon` | 0/1 | Agent 2 computed |
-| `month_sin` | -1 to 1 | Agent 2 computed |
-| `month_cos` | -1 to 1 | Agent 2 computed |
-| `ndwi_delta` | float | Agent 1 placeholder (0.0) |
-
-### Heatstroke Model Features (8)
-
-| Feature | Unit | Source |
-|---------|------|--------|
-| `max_temp_24h` | °C | Agent 2 computed |
-| `heat_index` | score | Agent 2 computed (temp × humidity) |
-| `consecutive_hot_days` | count | Agent 2 computed |
-| `avg_humidity_24h` | % | Agent 2 computed |
-| `population_density` | /km² | Zone static |
-| `is_monsoon` | 0/1 | Agent 2 computed |
-| `month_sin` | -1 to 1 | Agent 2 computed |
-| `month_cos` | -1 to 1 | Agent 2 computed |
-
-> **Critical:** `FLOOD_FEATURE_ORDER` and `HEAT_FEATURE_ORDER` constants in `agent_predictor.py` define the column order for both training and inference. Never reorder these — silent feature misalignment produces wrong predictions.
+**Seasonal multiplier**: Only May-June = full risk (1.0). July = 0.6 (monsoon cooling). Oct-Mar = 0.05.
 
 ---
 
-## 30-Day Forecast Method
+## Prediction Pipeline (Step by Step)
 
-### Why Not a Single Prediction?
+When `POST /api/v1/agent3/predict/{zone_id}` is called:
 
-The current feature vector captures "now." A 30-day forecast requires projecting what conditions will look like on each future day. Agent 3 uses a hybrid approach: **physical decay model + Pakistan monsoon calendar + GloFAS discharge data**.
-
-### Day-by-Day Projection (`FeatureProjector`)
-
-For each day d (1 to 30):
-
-**Rainfall features:**
+### Step 1: Load/Train Models (lazy, cached)
 ```
-cumulative_rain_7d[d]  = current × exp(-d/20) + expected_daily_rain × 7
-cumulative_rain_14d[d] = current × exp(-d/20) × 0.6 + expected_daily_rain × 14
-cumulative_rain_30d[d] = current × 0.3 + expected_daily_rain × 30
-rain_intensity_24h[d]  = expected_daily_rain[month_d] + discharge_boost[d]
+flood_model.joblib exists? → load it
+Prophet models exist? → load them
+Otherwise → train from training data (one-time cost)
 ```
 
-Where `exp(-d/20)` is exponential decay with ~14-day half-life (soil drainage).
-
-**GloFAS integration:**
-- For each future day d, checks if Agent 2's `/flood-forecast` returned a discharge signal within ±1 day
-- If discharge ratio > 1.3: `discharge_boost = (ratio - 1.0) × 20 mm/day`
-- This captures upstream river flooding that propagates downstream
-
-**Temperature:**
+### Step 2: Fetch Real Data from Agent 2
 ```
-max_temp[d] = PAKISTAN_TEMP_CURVE[future_month] + ZONE_OFFSET[zone_id]
+GET /api/v1/agent2/features/{zone_id}     → current conditions
+GET /api/v1/agent2/forecast/{zone_id}     → 16-day ECMWF forecast
+GET /api/v1/agent2/flood-forecast/{zone_id} → 30-day GloFAS discharge
 ```
 
-Pakistan monthly temperature curve (°C):
-| Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | Dec |
-|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-| 18 | 22 | 28 | 34 | 40 | 43 | 39 | 38 | 36 | 30 | 24 | 19 |
-
-Zone offsets: Karachi +3°C, Multan +2°C, Lahore +1°C, Peshawar 0°C, Islamabad -2°C
-
-**Humidity:**
+### Step 3: Generate Prophet Forecast (days 17-30)
 ```
-humidity[d] = current × (1 - d/30) + seasonal_baseline × (d/30)
-# seasonal_baseline: 72% in monsoon, 45% otherwise
+Prophet.forecast(province, last_16_days_temps, last_16_days_rains, start=day17, days=14)
+→ Returns temp + rain + confidence intervals for each day
 ```
 
-**Consecutive hot days:**
-- Continues accumulating from current value if projected temp > 40°C
-- Resets to 0 if projected temp drops below threshold
-
-### Model Inference
-
-For each projected feature vector:
+### Step 4: Compute Cumulative Rain Array
 ```python
-flood_risk[d] = flood_model.predict_proba(flood_features_d)[1]
-heat_risk[d]  = heat_model.predict_proba(heat_features_d)[1]
+total_daily_rains = []
+for day 1-16:  use real ECMWF forecast rain
+for day 17-30: use Prophet predicted rain (or seasonal fallback)
+
+# This gives us the rainfall trajectory for the whole month
+```
+
+### Step 5: Per-Day Prediction Loop (×30)
+```python
+for day in 1..30:
+    # A) Project weather features
+    if day <= 16:
+        temp, rain = ECMWF real forecast
+    else:
+        temp, rain = Prophet ML forecast
+    
+    # B) XGBoost flood prediction
+    cumulative_rain = sum(total_daily_rains[:day])
+    monthly_pace = cumulative_rain * (30 / day)
+    rain_for_model = 0.7 * cumulative_rain + 0.3 * monthly_pace
+    flood_prob = xgboost.predict_proba([Month, Temp, rain_for_model, Ice, Veg, Province])
+    
+    # C) GloFAS discharge modulation (per-day from real hydrology model)
+    discharge = get_glofas_for_day(day)
+    flood_prob *= discharge_multiplier
+    
+    # D) Daily intensity bonus (acute storm events)
+    if daily_rain > 50mm: flood_prob += 0.30
+    
+    # E) PMD heat risk
+    heat_prob = compute_heat_risk(temp, month, zone_id)
+    
+    # F) Build DayPrediction
+    → {day, date, flood_risk, heatstroke_risk, alert_level, confidence, data_source}
 ```
 
 ---
 
-## API Endpoints
-
-### Base URL: `http://localhost:8000/api/v1/agent3`
-
-| Method | Endpoint | Description | Used By |
-|--------|----------|-------------|---------|
-| POST | `/predict/{zone_id}` | 30-day risk forecast | Flutter, Agent 4, Dashboard |
-| GET | `/model/info` | Model metadata and accuracy | Monitoring, Dashboard |
-| POST | `/retrain` | Force retrain from latest data | Admin, post-CSV-upload |
-| POST | `/backtest` | Evaluate against historical events | Validation, Demo |
-
----
-
-### POST `/predict/{zone_id}`
-
-**Request:** No body (zone_id in path)
-
-**Response:**
-```json
-{
-  "zone_id": "karachi-south",
-  "zone_name": "Karachi South",
-  "predicted_at": "2025-05-18T14:30:00Z",
-  "horizon_days": 30,
-  "current_features": {
-    "cumulative_rain_7d": 180.5,
-    "max_temp_24h": 41.0,
-    "is_monsoon": 1,
-    ...
-  },
-  "predictions": [
-    { "day": 1, "flood_risk": 0.72, "heatstroke_risk": 0.45, "dominant_factor": "heavy_rainfall_24h" },
-    { "day": 2, "flood_risk": 0.68, "heatstroke_risk": 0.46, "dominant_factor": "high_cumulative_rain_7d" },
-    ...
-    { "day": 30, "flood_risk": 0.31, "heatstroke_risk": 0.52, "dominant_factor": "monsoon_season" }
-  ],
-  "summary": {
-    "peak_flood_day": 1,
-    "peak_flood_risk": 0.72,
-    "peak_heat_day": 30,
-    "peak_heat_risk": 0.54,
-    "avg_flood_risk": 0.45,
-    "avg_heat_risk": 0.49,
-    "high_flood_days": 8,
-    "high_heat_days": 3,
-    "overall_alert_level": "HIGH"
-  }
-}
-```
-
-**Alert levels:**
-| Level | Condition |
-|-------|-----------|
-| `CRITICAL` | Any risk > 0.8 |
-| `HIGH` | Any risk > 0.6 |
-| `MODERATE` | Any risk > 0.4 |
-| `LOW` | All risks ≤ 0.4 |
-
-**Dominant factor values:**
-| Value | Meaning |
-|-------|---------|
-| `heavy_rainfall_24h` | rain_intensity_24h > 30 mm |
-| `high_cumulative_rain_7d` | cumulative_rain_7d > 80 mm |
-| `poor_drainage_capacity` | drainage < 0.35 |
-| `monsoon_season` | is_monsoon = 1 |
-| `prolonged_heat_wave` | consecutive_hot_days > 5 |
-| `extreme_heat_index` | heat_index > 38 |
-| `extreme_temperature` | max_temp > 43°C |
-| `elevated_flood_conditions` | moderate flood signals |
-| `elevated_heat_conditions` | moderate heat signals |
-
----
-
-### GET `/model/info`
-
-```json
-{
-  "model_version": "1.0.0",
-  "model_type": "XGBoostClassifier (dual: flood + heatstroke)",
-  "training_date": "2025-05-18T14:00:00",
-  "training_samples": 6000,
-  "training_source": "synthetic_pakistan_calibrated",
-  "flood_model_auc": 0.94,
-  "heat_model_auc": 0.96,
-  "flood_model_accuracy": 0.89,
-  "heat_model_accuracy": 0.91,
-  "flood_features": ["cumulative_rain_7d", ...],
-  "heat_features": ["max_temp_24h", ...],
-  "model_path": "/backend/models/flood_model.joblib",
-  "is_loaded": true
-}
-```
-
----
-
-### POST `/backtest`
-
-**Request body (optional):**
-```json
-{
-  "zone_ids": ["karachi-south", "lahore-city"],
-  "event_types": ["flood", "heat"]
-}
-```
-
-**Response:**
-```json
-{
-  "run_at": "2025-05-18T14:30:00Z",
-  "events_evaluated": 6,
-  "flood_direction_accuracy": 0.9,
-  "heat_direction_accuracy": 1.0,
-  "overall_direction_accuracy": 0.9,
-  "events": [
-    {
-      "event_name": "2022 Super Floods — Karachi",
-      "zone_id": "karachi-south",
-      "event_type": "flood",
-      "event_date": "2022-08-25",
-      "known_severity": 0.9,
-      "model_prediction": 0.87,
-      "correct_direction": true,
-      "notes": "flood_pred=0.872, heat_pred=0.134"
-    },
-    ...
-  ]
-}
-```
-
-**Hardcoded historical events:**
-| Event | Zone | Date | Type | Known Severity |
-|-------|------|------|------|----------------|
-| 2022 Super Floods | karachi-south | Aug 2022 | flood | 0.90 |
-| 2022 Super Floods | multan-city | Aug 2022 | flood | 0.85 |
-| 2015 Karachi Heatwave | karachi-south | Jun 2015 | heat | 0.95 |
-| 2023 Lahore Heatwave | lahore-city | May 2023 | heat | 0.80 |
-| 2020 Peshawar Floods | peshawar-city | Jul 2020 | flood | 0.75 |
-| Normal Conditions | islamabad-g10 | Jan 2023 | none | 0.05 |
-
-> **Note:** Backtest uses synthetic feature vectors calibrated to each event's season and known conditions. True historical validation requires real sensor data from those dates.
-
----
-
-## Training Data Schemas
-
-### 1. FloodPrediction.csv (Bangladesh Weather Stations)
-
-**Source:** https://github.com/n-gauhar/Flood-prediction  
-**File:** `backend/data/training/FloodPrediction.csv`
-
-| CSV Column | Agent 3 Feature | Mapping |
-|-----------|-----------------|---------|
-| `Rainfall` | `cumulative_rain_30d` | direct (monthly mm) |
-| `Max_Temp` | `max_temp_24h` | direct (°C) |
-| `Relative_Humidity` | `avg_humidity_24h` | direct (%) |
-| `Month` | `month`, `is_monsoon`, `month_sin`, `month_cos` | derived |
-| `Flood?` | `flood_label` | non-empty = 1, empty = 0 |
-
-Terrain defaults: elevation=20m, drainage=0.35, population=8000/km²
-
-### 2. flood_prediction_dataset.csv (Kaggle — naiyakhalid)
-
-**Source:** https://www.kaggle.com/datasets/naiyakhalid/flood-prediction-dataset  
-**File:** `backend/data/training/flood_prediction_dataset.csv`
-
-| CSV Column | Agent 3 Feature | Mapping |
-|-----------|-----------------|---------|
-| `MonsoonIntensity` | `cumulative_rain_*` | × multiplier |
-| `TopographyDrainage` | `drainage_capacity` | direct (0-1) |
-| `FloodProbability` | `flood_label` | ≥ 0.5 = 1 |
-
-### 3. Synthetic Data (auto-generated fallback)
-
-Generated by `SyntheticDataGenerator` using:
-- Pakistan monsoon calendar (Jun-Sep heavy rainfall)
-- Zone terrain characteristics
-- Pakistan temperature curves (peak May-Jun)
-- Probabilistic labels based on domain rules
-
----
-
-## How to Add Real Training Data
-
-```bash
-# 1. Download Kaggle datasets (requires kaggle CLI + API token)
-kaggle datasets download naiyakhalid/flood-prediction-dataset -p backend/data/training/ --unzip
-kaggle datasets download alitaqishah/pakistan-flood-disasters-dataset-20102025 -p backend/data/training/ --unzip
-
-# 2. Download the GitHub CSV
-curl -o backend/data/training/FloodPrediction.csv \
-  https://raw.githubusercontent.com/n-gauhar/Flood-prediction/master/FloodPrediction.csv
-
-# 3. Force retrain to pick up new data
-curl -X POST http://localhost:8000/api/v1/agent3/retrain
-
-# 4. Check training source in model/info
-curl http://localhost:8000/api/v1/agent3/model/info | jq .training_source
-```
-
----
-
-## XGBoost Hyperparameters
-
-Both classifiers share the same configuration:
-
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| `n_estimators` | 200 | Good coverage without overfitting on 6k samples |
-| `max_depth` | 6 (flood) / 5 (heat) | Controls tree complexity |
-| `learning_rate` | 0.05 | Conservative — less overfitting |
-| `subsample` | 0.8 | Row sampling for variance reduction |
-| `colsample_bytree` | 0.8 | Feature sampling per tree |
-| `eval_metric` | logloss | Probabilistic output calibration |
-| `n_jobs` | -1 | Use all CPU cores |
-
----
-
-## How Agent 4 Should Consume This
+## DayPrediction Output Schema
 
 ```python
-import httpx
-
-async def get_zone_risk(zone_id: str):
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"http://localhost:8000/api/v1/agent3/predict/{zone_id}")
-        data = resp.json()
-        
-        summary = data["summary"]
-        predictions = data["predictions"]
-        
-        if summary["overall_alert_level"] in ["CRITICAL", "HIGH"]:
-            # Trigger response protocols
-            peak_day = summary["peak_flood_day"]
-            peak_risk = summary["peak_flood_risk"]
-            ...
-        
-        # Day 1 risk for immediate action decisions
-        day_1 = predictions[0]
-        flood_now = day_1["flood_risk"]
-        heat_now = day_1["heatstroke_risk"]
+class DayPrediction(BaseModel):
+    day: int                     # 1-30
+    date: str                    # "2026-05-19"
+    flood_risk: float            # 0.0 - 1.0
+    heatstroke_risk: float       # 0.0 - 1.0
+    dominant_factor: str         # "heavy_monsoon_rain" / "extreme_heat" / etc.
+    expected_temp_c: float       # Projected temperature
+    expected_rain_mm: float      # Projected daily rainfall
+    expected_humidity: float     # Projected humidity
+    alert_level: str             # NONE / LOW / MODERATE / HIGH / CRITICAL
+    confidence: str              # "high" / "moderate" / "low"
+    data_source: str             # "ecmwf_forecast" / "ecmwf_extended" / "xgboost_forecast" / "prophet_forecast"
 ```
 
-**Recommended thresholds:**
-| Risk | Action |
-|------|--------|
-| > 0.8 | CRITICAL — evacuate/alert NDMA |
-| 0.6-0.8 | HIGH — standby response teams, public advisory |
-| 0.4-0.6 | MODERATE — enhanced monitoring |
-| < 0.4 | LOW — normal operations |
+**Alert level thresholds:**
+| Max Risk | Alert |
+|----------|-------|
+| ≥ 75% | CRITICAL |
+| ≥ 50% | HIGH |
+| ≥ 25% | MODERATE |
+| ≥ 10% | LOW |
+| < 10% | NONE |
 
 ---
 
-## How Flutter App Should Consume This
+## Data Sources & Confidence Tiers
 
-```dart
-Future<void> fetchZonePredictions(String zoneId) async {
-  final response = await http.post(
-    Uri.parse('$baseUrl/api/v1/agent3/predict/$zoneId'),
-  );
-  final data = jsonDecode(response.body);
-  
-  final summary = data['summary'];
-  final alertLevel = summary['overall_alert_level'];   // "LOW"|"MODERATE"|"HIGH"|"CRITICAL"
-  final peakFloodRisk = summary['peak_flood_risk'];    // 0.0-1.0
-  
-  // 30-day chart data
-  final predictions = (data['predictions'] as List)
-    .map((p) => DayRisk(
-      day: p['day'],
-      flood: p['flood_risk'],
-      heat: p['heatstroke_risk'],
-    )).toList();
+| Days | Weather Source | Data Source Label | Confidence |
+|------|--------------|-------------------|------------|
+| 1-7 | Open-Meteo ECMWF/GFS | `ecmwf_forecast` | HIGH |
+| 8-16 | Open-Meteo extended (16-day) | `ecmwf_extended` | MODERATE |
+| 17-30 | Prophet ML (22yr trained) | `prophet_forecast` or `xgboost_forecast` | LOW |
+
+**For flood risk specifically:**
+| Signal | Source | Type |
+|--------|--------|------|
+| Base probability | XGBoost (trained on real floods) | ML classification |
+| Weather input (days 1-16) | ECMWF/GFS via Open-Meteo | Real meteorological model |
+| Weather input (days 17-30) | Prophet (22yr daily GEE data) | ML time series |
+| Per-day discharge | GloFAS via Open-Meteo flood API | Real hydrological model |
+| Daily intensity | Forecast rain values | Direct input |
+
+---
+
+## Zone → Province Mapping
+
+Agent 3 maps each zone to a province for the XGBoost model:
+
+```python
+ZONE_TO_PROVINCE = {
+    "islamabad-g10": "Federal",
+    "lahore-city": "Punjab",
+    "karachi-south": "Sindh",
+    "peshawar-city": "Kpk",
+    "multan-city": "Punjab",
+    "jacobabad-city": "Sindh",
+    "sukkur-city": "Sindh",
+    "quetta-city": "Balochistan",
 }
 ```
 
+Province encoding for XGBoost: Punjab=0, Sindh=1, Federal=2, Kpk=3, Balochistan=4, Gilgit=5
+
 ---
 
-## Environment Variables
+## Training Data Details
 
-No new environment variables are required for Agent 3. Optional config:
-
-```env
-# Override where Agent 3 calls Agent 2 (useful for containerized deployment)
-AGENT2_BASE_URL=http://agent2-service:8000
+### For XGBoost (monthly data)
+Located in `data/training/{Province}_training.csv`:
 ```
-
-Default: `http://localhost:8000` (same-process, works with standard uvicorn setup)
-
----
-
-## How to Run
-
-Agent 3 is part of the same FastAPI app — no separate process needed.
-
-```bash
-cd backend
-venv\Scripts\activate          # Windows
-uvicorn main:app --reload --port 8000
-
-# Test prediction (first call triggers training — ~30s):
-curl -X POST http://localhost:8000/api/v1/agent3/predict/karachi-south
-
-# Check model info:
-curl http://localhost:8000/api/v1/agent3/model/info
-
-# Run backtest:
-curl -X POST http://localhost:8000/api/v1/agent3/backtest -H "Content-Type: application/json" -d '{}'
+Month, Year, Temp, Ice, veg, Flood, Rain(mm)
+3,     2000, 30.6, -0.17, 3660, False, 7.56
+7,     2010, 35.3, -0.05, 2563, True,  96.9   ← real flood event
 ```
+- 6 files, ~262 rows each (22 years × 12 months, with gaps)
+- Flood column: True/False from NDMA Pakistan records
+- 60 total flood events across all provinces (3.8% positive rate)
 
-**Swagger UI:** http://localhost:8000/docs → Agent 3 — ML Predictor section
+### For Prophet (daily data)
+Located in `data/training/{Province}/`:
+- `Temp.csv` + `temp1.csv`: MODIS Land Surface Temperature (daily)
+- `Pre.csv` + `pre1.csv`: CHIRPS/GPM precipitation (daily)
+- ~8,000 days per province (Feb 2000 — Dec 2021)
+- `Flood.csv`: Monthly flood labels
+- `Ndsi.csv`, `Veg.csv`: Supplementary indices
 
 ---
 
-## What's Done vs What's Left
+## Known Limitations & Honest Labels
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| XGBoost flood model | ✅ Done | Trains on CSV or synthetic data |
-| XGBoost heatstroke model | ✅ Done | Pakistan temp curve + heat index |
-| Lazy model training | ✅ Done | First /predict call triggers training |
-| Model persistence | ✅ Done | joblib bundle, reloaded on restart |
-| 30-day feature projection | ✅ Done | Decay + monsoon calendar + GloFAS |
-| GloFAS discharge integration | ✅ Done | Boosts flood signal per day |
-| POST /predict/{zone_id} | ✅ Done | Full 30-day day-by-day output |
-| GET /model/info | ✅ Done | Accuracy + training metadata |
-| POST /retrain | ✅ Done | Background retrain after new data |
-| POST /backtest | ✅ Done | 6 historical Pakistan events |
-| CSV dataset loader | ✅ Done | 2 schemas detected automatically |
-| Synthetic data generator | ✅ Done | Pakistan-calibrated fallback |
-| Agent 4 integration | ❌ Planned | Consume /predict for response triggers |
-| SHAP explainability | ❌ Planned | Per-prediction feature importance |
-| Agent 1 NDWI feature | ❌ Planned | Currently 0.0 placeholder |
-| Time-series model (LSTM) | ❌ Future | Replace projection heuristics |
+1. **Days 17-30 confidence is "low"**: No weather model can predict specific daily conditions at 3-4 weeks. Prophet gives seasonally-aware estimates with uncertainty intervals.
+2. **Heat model is rule-based**: Labeled as such. No ML training data for heatstroke events in Pakistan.
+3. **Social/NDMA services are simulated**: Marked with confidence=0.50 in signal store.
+4. **Karachi may show 0% heat**: Coastal temperatures (~33°C in May) fall below the 35°C heat threshold with the 0.35 zone multiplier. This is correct — Karachi's heat risk is humidity-amplified, which this model doesn't yet capture.
+5. **Monthly → daily translation**: XGBoost was trained on monthly data. We use cumulative-to-date as the best proxy. Not perfect, but physically motivated (antecedent moisture).
+
+---
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `agents/agent_predictor.py` | Main Agent 3 module: models, projector, endpoints |
+| `services/weather_forecaster.py` | Prophet weather forecaster (22yr daily data) |
+| `models/flood_model.joblib` | Trained XGBoost classifier (auto-generated) |
+| `models/prophet/` | Trained Prophet models (auto-generated on first call) |
+| `data/training/*.csv` | Monthly aggregates for XGBoost |
+| `data/training/{Province}/` | Daily data for Prophet |
+
+---
+
+## How to Modify
+
+### Add a new zone:
+1. Add to `config/settings.py` ZONES list (id, name, lat, lng, province, elevation, drainage, population)
+2. Add to `ZONE_TO_PROVINCE` in `agent_predictor.py`
+3. Add to `ZONE_HEAT_MULTIPLIER` in `agent_predictor.py`
+4. Add to `static/index.html` (zones array, zoneNames, zoneProvinces)
+
+### Retrain flood model:
+Delete `models/flood_model.joblib` → next API call will retrain from CSVs.
+
+### Retrain Prophet models:
+Delete `models/prophet/` directory → next prediction call will retrain (~15-20s).
+
+### Adjust heat thresholds:
+Edit `compute_heat_risk()` in `agent_predictor.py`. Thresholds are calibrated to PMD advisories.

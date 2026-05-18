@@ -188,8 +188,8 @@ backend/
 ### 1. Open-Meteo (FREE — No API Key)
 **File:** `services/openmeteo_service.py`
 
-- **Current Weather + 7-day Forecast:** `api.open-meteo.com/v1/forecast`
-  - Returns: temp, humidity, rain, wind, cloud cover + 7-day daily forecast
+- **Current Weather + 16-day Forecast:** `api.open-meteo.com/v1/forecast`
+  - Returns: temp, humidity, rain, wind, cloud cover + 16-day daily forecast
   - Produces signals: `temperature`, `humidity`, `rainfall`, `wind`, `forecast_7d`
 
 - **30-Day Historical:** Same endpoint with `start_date` + `end_date` params

@@ -83,6 +83,36 @@ class Settings(BaseSettings):
             "drainage_capacity": 0.35,
             "population_density": 4500,
         },
+        {
+            "id": "jacobabad-city",
+            "name": "Jacobabad City",
+            "lat": 28.2810,
+            "lng": 68.4376,
+            "province": "Sindh",
+            "elevation_m": 55,
+            "drainage_capacity": 0.25,
+            "population_density": 2100,
+        },
+        {
+            "id": "sukkur-city",
+            "name": "Sukkur City",
+            "lat": 27.7052,
+            "lng": 68.8574,
+            "province": "Sindh",
+            "elevation_m": 66,
+            "drainage_capacity": 0.3,
+            "population_density": 3800,
+        },
+        {
+            "id": "quetta-city",
+            "name": "Quetta City",
+            "lat": 30.1798,
+            "lng": 66.9750,
+            "province": "Balochistan",
+            "elevation_m": 1680,
+            "drainage_capacity": 0.35,
+            "population_density": 1800,
+        },
     ]
 
     class Config:

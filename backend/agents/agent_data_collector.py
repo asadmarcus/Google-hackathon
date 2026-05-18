@@ -287,7 +287,7 @@ async def get_weather_forecast(zone_id: str):
     if not zone:
         raise HTTPException(status_code=404, detail=f"Zone \'{zone_id}\' not found")
 
-    forecast = await openmeteo_service.fetch_7day_daily_forecast(zone)
+    forecast = await openmeteo_service.fetch_16day_daily_forecast(zone)
     
     return {
         "zone_id": zone_id,
@@ -396,7 +396,8 @@ def _aggregate_daily(signals: List[Dict], days: int) -> List[Dict]:
 def _compute_ml_features(signals: List[Dict], zone: Dict) -> Dict:
     """
     Compute the exact feature vector Agent 3's XGBoost model expects.
-    Matches the feature table from our project doc.
+    Matches the feature table from our project doc. Uses HOURLY deduplication
+    to prevent inflated values from frequent polling (scheduler runs every 15 min).
     """
     now = datetime.utcnow()
     
@@ -405,10 +406,27 @@ def _compute_ml_features(signals: List[Dict], zone: Dict) -> Dict:
     humidity_signals = [s for s in signals if s["signal_type"] == "humidity"]
     
     # Time-windowed aggregates
-    def rain_in_window(hours):
+    def rain_in_window(hours: int) -> float:
+        """
+        Sum rainfall in a time window with HOURLY deduplication.
+        The scheduler polls every 15 min, storing the same current rainfall reading
+        multiple times. We take only ONE reading per hour to avoid inflation.
+        """
         cutoff = now - timedelta(hours=hours)
-        return sum(s["value"] for s in rain_signals
-                   if datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) > cutoff)
+        window_signals = [
+            s for s in rain_signals
+            if datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) > cutoff
+        ]
+        
+        # Deduplicate: keep only ONE signal per hour (the max value in that hour)
+        hourly_max = {}
+        for s in window_signals:
+            ts = datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None)
+            hour_key = ts.strftime("%Y-%m-%d-%H")
+            if hour_key not in hourly_max or s["value"] > hourly_max[hour_key]:
+                hourly_max[hour_key] = s["value"]
+        
+        return sum(hourly_max.values())
     
     def max_temp_in_window(hours):
         cutoff = now - timedelta(hours=hours)
