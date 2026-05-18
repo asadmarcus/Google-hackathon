@@ -27,8 +27,8 @@ class WeatherService:
         Returns list of normalized Signal dicts.
         """
         if not self.api_key:
-            logger.warning(f"  ⚠ No OpenWeather API key — using simulated data for {zone['name']}")
-            return self._simulate_weather(zone)
+            logger.info(f"  ⏭ No OpenWeather API key — skipping (Open-Meteo covers this)")
+            return []  # Don't inject fake data. Open-Meteo provides real weather without a key.
 
         try:
             # Current weather
@@ -49,10 +49,10 @@ class WeatherService:
 
         except httpx.HTTPStatusError as e:
             logger.error(f"  ✗ Weather API error for {zone['name']}: {e.response.status_code}")
-            return self._simulate_weather(zone)
+            return []  # Don't inject fake data on API failure
         except Exception as e:
             logger.error(f"  ✗ Weather fetch failed for {zone['name']}: {e}")
-            return self._simulate_weather(zone)
+            return []  # Don't inject fake data on failure
 
     def _parse_weather_response(self, data: Dict, zone: Dict) -> List[Dict]:
         """Parse OpenWeatherMap response into Signal format."""

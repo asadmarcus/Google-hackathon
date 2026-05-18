@@ -528,15 +528,26 @@ function renderPrediction(data) {
     <summary style="cursor:pointer;font-size:12px;color:var(--purple);padding:4px 0;user-select:none">Show Day-by-Day Table</summary>
     <div style="overflow-x:auto;margin-top:10px">
     <table class="signal-table">
-      <thead><tr><th>Day</th><th>Flood Risk</th><th>Heat Risk</th><th>Dominant Factor</th></tr></thead>
+      <thead><tr><th>Day</th><th>Date</th><th>Temp</th><th>Rain</th><th>Flood Risk</th><th>Heat Risk</th><th>Alert</th><th>Confidence</th><th>Source</th></tr></thead>
       <tbody>`;
 
   preds.forEach(p => {
+    const alertColors = {NONE:'var(--text-muted)',LOW:'var(--green)',MODERATE:'var(--yellow)',HIGH:'var(--accent)',CRITICAL:'var(--red)'};
+    const alertColor = alertColors[p.alert_level] || 'var(--text-muted)';
+    const tempColor = p.expected_temp_c >= 44 ? 'var(--red)' : p.expected_temp_c >= 40 ? 'var(--accent)' : 'var(--text)';
+    const rainColor = p.expected_rain_mm > 30 ? 'var(--blue)' : p.expected_rain_mm > 0 ? 'var(--accent2)' : 'var(--text-muted)';
+    const confColors = {high:'var(--green)',moderate:'var(--yellow)',low:'var(--text-muted)'};
+    const confColor = confColors[p.confidence] || 'var(--text-muted)';
     html += `<tr>
       <td style="font-family:var(--mono)">Day ${p.day}</td>
+      <td style="font-size:11px;color:var(--text-secondary)">${p.date || ''}</td>
+      <td style="font-family:var(--mono);color:${tempColor}">${p.expected_temp_c ? p.expected_temp_c.toFixed(1) + '°C' : '—'}</td>
+      <td style="font-family:var(--mono);color:${rainColor}">${p.expected_rain_mm !== undefined ? p.expected_rain_mm.toFixed(1) + 'mm' : '—'}</td>
       <td><span style="font-family:var(--mono);color:${riskColor(p.flood_risk)}">${(p.flood_risk*100).toFixed(1)}%</span></td>
       <td><span style="font-family:var(--mono);color:${riskColor(p.heatstroke_risk)}">${(p.heatstroke_risk*100).toFixed(1)}%</span></td>
-      <td style="color:var(--text-muted);font-size:11px">${p.dominant_factor}</td>
+      <td style="font-size:11px;font-weight:600;color:${alertColor}">${p.alert_level || '—'}</td>
+      <td style="font-size:10px;font-weight:600;color:${confColor}">${(p.confidence || '—').toUpperCase()}</td>
+      <td style="font-size:9px;color:var(--text-muted)">${p.data_source || '—'}</td>
     </tr>`;
   });
 

@@ -121,8 +121,8 @@ class NDMAAlertService:
                 "lng": zone["lng"],
                 "value": alert_info["severity"],
                 "severity": alert_info["severity"],
-                "confidence": 0.90,  # Official alerts are high confidence
-                "source": "ndma_simulated",
+                "confidence": 0.50,  # Simulated — no real NDMA API connected  # Official alerts are high confidence
+                "source": "simulated_ndma",
                 "timestamp": now.isoformat() + "Z",
                 "metadata": {
                     "alert_level": alert_level,
@@ -154,8 +154,8 @@ class NDMAAlertService:
                 "lng": zone["lng"],
                 "value": alert_info["severity"],
                 "severity": alert_info["severity"],
-                "confidence": 0.90,
-                "source": "ndma_simulated",
+                "confidence": 0.50,  # Simulated — no real NDMA API connected
+                "source": "simulated_ndma",
                 "timestamp": now.isoformat() + "Z",
                 "metadata": {
                     "alert_level": alert_level,

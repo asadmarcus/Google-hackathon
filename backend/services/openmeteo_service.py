@@ -110,6 +110,64 @@ class OpenMeteoService:
             logger.warning(f"  ⚠ OpenMeteo flood API failed for {zone['name']}: {e}")
             return []
 
+
+    async def fetch_7day_daily_forecast(self, zone: Dict) -> List[Dict]:
+        """
+        Fetch structured 7-day daily forecast for Agent 3.
+        Returns actual meteorological predictions (NOT monthly averages).
+        
+        This is the KEY data source for accurate short-term predictions.
+        Open-Meteo uses ECMWF/GFS weather models — same as national met offices.
+        
+        Returns:
+            List of 7 dicts: [{"day": 1, "temp_max": 43.2, "rain_mm": 0, "humidity": 45, "wind_kph": 12}, ...]
+        """
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/forecast",
+                params={
+                    "latitude": zone["lat"],
+                    "longitude": zone["lng"],
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,relative_humidity_2m_max,relative_humidity_2m_min,wind_speed_10m_max",
+                    "timezone": "Asia/Karachi",
+                    "forecast_days": 7,
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            daily = data.get("daily", {})
+            dates = daily.get("time", [])
+            
+            forecast_days = []
+            for i, date_str in enumerate(dates):
+                temp_max = (daily.get("temperature_2m_max") or [None])[i]
+                temp_min = (daily.get("temperature_2m_min") or [None])[i]
+                rain = (daily.get("precipitation_sum") or [0])[i] or 0
+                humidity_max = (daily.get("relative_humidity_2m_max") or [60])[i] or 60
+                humidity_min = (daily.get("relative_humidity_2m_min") or [30])[i] or 30
+                wind = (daily.get("wind_speed_10m_max") or [0])[i] or 0
+                
+                forecast_days.append({
+                    "day": i + 1,
+                    "date": date_str,
+                    "temp_max": round(temp_max, 1) if temp_max else None,
+                    "temp_min": round(temp_min, 1) if temp_min else None,
+                    "rain_mm": round(rain, 2),
+                    "humidity_max": round(humidity_max, 1),
+                    "humidity_min": round(humidity_min, 1),
+                    "humidity_avg": round((humidity_max + humidity_min) / 2, 1),
+                    "wind_kph": round(wind, 1),
+                })
+            
+            logger.info(f"  7-day forecast for {zone['name']}: temps {[d['temp_max'] for d in forecast_days]}")
+            return forecast_days
+            
+        except Exception as e:
+            logger.error(f"  Failed to fetch 7-day forecast for {zone['name']}: {e}")
+            return []
+
+
     # ─── Parsers ───────────────────────────────────────────────────────────────
 
     def _parse_current_forecast(self, data: Dict, zone: Dict) -> List[Dict]:

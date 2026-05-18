@@ -92,6 +92,18 @@ async def agent_status():
             "maps_api": "configured" if settings.GOOGLE_MAPS_API_KEY else "missing",
         },
         "zones": [z["name"] for z in settings.ZONES],
+        "data_sources": {
+            "real": [
+                "open_meteo (weather + 7-day forecast — ECMWF model, no key needed)",
+                "open_meteo_flood (GloFAS river discharge — 30-day forecast, no key needed)",
+                "openweathermap (real-time weather — requires API key)",
+                "google_maps (traffic congestion — requires API key)",
+            ],
+            "simulated": [
+                "social_media (Urdu+English crisis keywords — no real feed connected)",
+                "ndma_alerts (Pakistan disaster authority — no real API available)",
+            ],
+        },
     }
 
 
@@ -257,6 +269,33 @@ async def get_model_features(zone_id: str):
         "feature_names": list(features.keys()),
     }
 
+
+
+
+@router.get("/forecast/{zone_id}")
+async def get_weather_forecast(zone_id: str):
+    """
+    Get 7-day weather forecast from Open-Meteo (REAL meteorological prediction).
+    
+    This is what Agent 3 uses for accurate Days 1-7 predictions.
+    Open-Meteo uses ECMWF/GFS models — same quality as national weather services.
+    
+    Returns actual predicted temperatures, rainfall, humidity per day.
+    NOT monthly averages — real weather model output.
+    """
+    zone = next((z for z in settings.ZONES if z["id"] == zone_id), None)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone \'{zone_id}\' not found")
+
+    forecast = await openmeteo_service.fetch_7day_daily_forecast(zone)
+    
+    return {
+        "zone_id": zone_id,
+        "zone_name": zone["name"],
+        "source": "Open-Meteo ECMWF/GFS (real weather model prediction)",
+        "forecast_days": len(forecast),
+        "days": forecast,
+    }
 
 @router.get("/zones")
 async def list_zones():

@@ -76,8 +76,8 @@ class SocialSignalService:
                 "lng": zone["lng"],
                 "value": severity,  # Severity as value for social signals
                 "severity": severity,
-                "confidence": 0.65,  # Social signals have lower confidence
-                "source": "social_simulated",
+                "confidence": 0.50,  # Simulated source — lower confidence  # Social signals have lower confidence
+                "source": "simulated_social",
                 "timestamp": now.isoformat() + "Z",
                 "metadata": {
                     "post_text": post,
@@ -104,8 +104,8 @@ class SocialSignalService:
                 "lng": zone["lng"],
                 "value": severity,
                 "severity": severity,
-                "confidence": 0.60,
-                "source": "social_simulated",
+                "confidence": 0.50,  # Simulated source — lower confidence
+                "source": "simulated_social",
                 "timestamp": now.isoformat() + "Z",
                 "metadata": {
                     "post_text": post,
