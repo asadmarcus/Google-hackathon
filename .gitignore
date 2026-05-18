@@ -1,0 +1,32 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Environment variables
+.env
+*.env
+
+# Database
+*.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (large binary files)
+backend/models/*.joblib
+backend/models/*.pkl
+
+# Logs
+*.log
