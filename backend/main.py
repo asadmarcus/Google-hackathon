@@ -1,65 +1,250 @@
 """
 CIRO — Crisis Intelligence & Response Orchestrator
-Main FastAPI Application
+====================================================
+Main FastAPI Application (Production-Grade)
+
+Features:
+  - Multi-agent architecture (Agent 2 active, 1/3/4 planned)
+  - Automatic scheduled data collection (APScheduler)
+  - SQLite persistent signal storage with deduplication
+  - WebSocket real-time push to Flutter clients
+  - Retry logic with circuit breaker on all API calls
+  - Comprehensive metrics and monitoring endpoints
+  - CORS configured for Flutter mobile app
+
+Startup Flow:
+  1. Initialize SQLite database
+  2. Start APScheduler (auto-fetch every 15 min)
+  3. Expose REST API + WebSocket endpoints
+  4. Accept Flutter client connections
+
+Author: CIRO Team
+GitHub: https://github.com/asadmarcus/Fuckathon
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import logging
+import sys
+from typing import Optional
 
 from agents.agent_data_collector import router as data_collector_router
+from services.signal_store import SignalStore
+from services.scheduler import CIROScheduler
+from services.websocket_manager import ws_manager
+from services.retry_client import RetryClient
 from config.settings import settings
 
-# Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+# ─── Logging Configuration ─────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s │ %(levelname)-7s │ %(name)-20s │ %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logger = logging.getLogger("ciro")
 
+# ─── Global Services ───────────────────────────────────────────────────────────
+signal_store = SignalStore()
+scheduler = CIROScheduler()
 
+
+# ─── Application Lifespan ──────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown events."""
-    logger.info("🚀 CIRO Backend starting up...")
-    logger.info(f"   Environment: {settings.ENVIRONMENT}")
-    logger.info(f"   Monitored zones: {len(settings.ZONES)}")
-    yield
-    logger.info("🛑 CIRO Backend shutting down...")
+    """
+    Application startup and shutdown lifecycle.
+    
+    Startup:
+      1. Initialize SQLite signal store
+      2. Start APScheduler for periodic fetching
+      
+    Shutdown:
+      1. Stop scheduler gracefully
+      2. Close HTTP clients
+    """
+    logger.info("=" * 60)
+    logger.info("   CIRO — Crisis Intelligence & Response Orchestrator")
+    logger.info("=" * 60)
+    logger.info(f"   Environment : {settings.ENVIRONMENT}")
+    logger.info(f"   Zones       : {len(settings.ZONES)}")
+    logger.info(f"   Fetch every : {settings.FETCH_INTERVAL_MINUTES} min")
+    logger.info(f"   Buffer      : {settings.SIGNAL_BUFFER_DAYS} days")
+    logger.info("=" * 60)
+
+    # 1. Initialize database
+    await signal_store.initialize()
+
+    # 2. Start scheduler
+    from agents.agent_data_collector import run_fetch_cycle
+    await scheduler.start(
+        fetch_callback=run_fetch_cycle,
+        prune_callback=signal_store.prune_expired,
+    )
+
+    logger.info("🚀 CIRO Backend ready — accepting connections")
+    logger.info("")
+
+    yield  # App is running
+
+    # Shutdown
+    await scheduler.shutdown()
+    logger.info("🛑 CIRO Backend shut down gracefully")
 
 
+# ─── FastAPI Application ───────────────────────────────────────────────────────
 app = FastAPI(
     title="CIRO — Crisis Intelligence & Response Orchestrator",
-    description="Multi-Agent AI System for Urban Crisis Prediction & Response",
-    version="1.0.0",
+    description="""
+## Multi-Agent AI System for Urban Crisis Prediction & Response
+
+CIRO monitors Pakistani urban zones for flood and heatwave risks using:
+- **Agent 1** (planned): Satellite imagery via GeoGemma + Earth Engine
+- **Agent 2** (active): Real-time data collection from 6 API sources
+- **Agent 3** (planned): ML prediction (XGBoost, 30-day forecast)
+- **Agent 4** (planned): Response orchestration & action simulation
+
+### Data Sources (Agent 2):
+| Source | Type | Key Required |
+|--------|------|:---:|
+| Open-Meteo Weather | Current + 7-day forecast + historical | ❌ FREE |
+| Open-Meteo Flood (GloFAS) | 30-day river discharge forecast | ❌ FREE |
+| OpenWeatherMap | Real-time weather | ✅ Free key |
+| Google Maps Traffic | Congestion data | ✅ $200 credit |
+| NDMA Pakistan | Official disaster alerts | ❌ Simulated |
+| Social Media | Urdu+English crisis keywords | ❌ Simulated |
+
+### Real-Time:
+Connect via WebSocket at `ws://host/ws/signals` for live signal streaming.
+    """,
+    version="2.0.0",
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# CORS — allow Flutter app to connect
+# CORS — allow Flutter app from any origin (restrict in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register agent routers
-app.include_router(data_collector_router, prefix="/api/v1/agent2", tags=["Agent 2 — Data Collector"])
+# ─── Agent Routers ─────────────────────────────────────────────────────────────
+app.include_router(
+    data_collector_router,
+    prefix="/api/v1/agent2",
+    tags=["Agent 2 — Data & API Collector"],
+)
 
 
-@app.get("/")
-async def root():
+# ─── Root Endpoints ────────────────────────────────────────────────────────────
+@app.get("/api", tags=["System"])
+async def api_root():
+    """API status overview (JSON)."""
     return {
         "service": "CIRO — Crisis Intelligence & Response Orchestrator",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "online",
         "agents": {
-            "agent_1": "imagery (planned)",
-            "agent_2": "data_collector (active)",
-            "agent_3": "predictor (planned)",
-            "agent_4": "orchestrator (planned)",
-        }
+            "agent_1": {"name": "Imagery & Geospatial", "status": "planned"},
+            "agent_2": {"name": "Data & API Collector", "status": "active"},
+            "agent_3": {"name": "Predictive Model (ML)", "status": "planned"},
+            "agent_4": {"name": "Response Orchestrator", "status": "planned"},
+        },
+        "websocket": "ws://host/ws/signals",
+        "docs": "/docs",
     }
 
 
-@app.get("/health")
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    """Serve the Agent 2 Control Panel dashboard."""
+    return FileResponse("static/index.html")
+
+
+@app.get("/health", tags=["System"])
 async def health():
-    return {"status": "healthy", "agents_active": 1}
+    """Health check endpoint for monitoring/load balancers."""
+    return {
+        "status": "healthy",
+        "agents_active": 1,
+        "scheduler_running": scheduler._is_running,
+        "websocket_clients": ws_manager.active_connections,
+        "database": "sqlite (persistent)",
+    }
+
+
+@app.get("/metrics", tags=["System"])
+async def metrics():
+    """
+    Comprehensive system metrics.
+    Shows: signal counts, API success rates, scheduler status, WebSocket stats.
+    """
+    store_metrics = await signal_store.get_all_metrics()
+    
+    return {
+        "signal_store": store_metrics,
+        "api_clients": RetryClient.get_all_metrics(),
+        "scheduler": scheduler.get_status(),
+        "websocket": ws_manager.get_metrics(),
+    }
+
+
+# ─── WebSocket Endpoint ────────────────────────────────────────────────────────
+@app.websocket("/ws/signals")
+async def websocket_signals(
+    websocket: WebSocket,
+    zone: Optional[str] = Query(None, description="Filter by zone_id"),
+    min_severity: int = Query(0, description="Minimum severity to receive"),
+):
+    """
+    Real-time signal stream via WebSocket.
+    
+    Connect from Flutter:
+      ws://host/ws/signals                    → all signals
+      ws://host/ws/signals?zone=islamabad-g10 → one zone only
+      ws://host/ws/signals?min_severity=7     → high severity only
+    
+    Messages received:
+      {"type": "connected", "filters": {...}}
+      {"type": "signal", "data": {...}}
+      {"type": "alert", "priority": "critical", "data": {...}}
+    """
+    client = await ws_manager.connect(
+        websocket,
+        zone_filter=zone,
+        min_severity=min_severity,
+    )
+    
+    try:
+        # Keep connection alive — wait for client messages or disconnect
+        while True:
+            # Listen for any client messages (ping/pong, filter updates)
+            data = await websocket.receive_text()
+            
+            # Client can update filters dynamically
+            import json
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "update_filters":
+                    client.zone_filter = msg.get("zone")
+                    client.min_severity = msg.get("min_severity", 0)
+                    await websocket.send_json({
+                        "type": "filters_updated",
+                        "filters": {
+                            "zone": client.zone_filter,
+                            "min_severity": client.min_severity,
+                        }
+                    })
+            except json.JSONDecodeError:
+                pass  # Ignore invalid messages
+                
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(client)
+    except Exception:
+        await ws_manager.disconnect(client)

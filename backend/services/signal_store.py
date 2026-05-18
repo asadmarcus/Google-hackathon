@@ -1,120 +1,360 @@
 """
-Signal Store — In-Memory + Firebase Buffer
-===========================================
-Stores signals in a rolling 30-day buffer.
-Uses in-memory storage for hackathon (swap to Firestore for production).
-Provides query methods for Agent 3 feature computation.
-"""
-import logging
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-from collections import defaultdict
+Signal Store — SQLite Persistent Storage
+==========================================
+Production-grade signal storage with:
+  - SQLite persistence (survives restarts)
+  - Signal deduplication (prevents duplicates on repeated fetches)
+  - Indexed queries by zone, type, and timestamp
+  - Automatic pruning of signals older than buffer window
+  - Async-compatible via aiosqlite
 
-logger = logging.getLogger("ciro.services.store")
+Architecture:
+  ┌────────────────────────────────────┐
+  │         SignalStore (SQLite)        │
+  │                                    │
+  │  signals table                     │
+  │  ├─ signal_id (PK, unique)         │
+  │  ├─ signal_type                    │
+  │  ├─ zone_id (indexed)             │
+  │  ├─ value, severity, confidence    │
+  │  ├─ source                         │
+  │  ├─ timestamp (indexed)            │
+  │  └─ metadata (JSON)                │
+  │                                    │
+  │  Indexes: zone+timestamp, type     │
+  │  Auto-prune: > 30 days removed     │
+  └────────────────────────────────────┘
+
+Author: CIRO Team
+"""
+import aiosqlite
+import json
+import logging
+import os
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Tuple
+from pathlib import Path
+
+from config.settings import settings
+
+logger = logging.getLogger("ciro.store")
+
+# Database path — stored in project data/ directory
+DB_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "data"
+DB_PATH = DB_DIR / "signals.db"
 
 
 class SignalStore:
     """
-    Rolling 30-day signal buffer.
-    In-memory for hackathon speed. Production would use Firestore.
+    Persistent signal storage using SQLite.
+    
+    Features:
+      - Deduplication via UNIQUE constraint on signal_id
+      - Time-based queries with indexed columns
+      - Automatic pruning of expired signals
+      - Metrics tracking (inserts, duplicates skipped, queries)
+    
+    Usage:
+        store = SignalStore()
+        await store.initialize()  # Call once at startup
+        await store.store_signals([...])
+        signals = await store.get_signals("islamabad-g10", hours=24)
     """
 
     def __init__(self):
-        # In-memory store: zone_id -> list of signals
-        self._store: Dict[str, List] = defaultdict(list)
-        self._max_age_hours = 30 * 24  # 30 days
+        self._db_path = str(DB_PATH)
+        self._max_age_hours = settings.SIGNAL_BUFFER_DAYS * 24
+        self._initialized = False
+        
+        # Metrics
+        self.metrics = {
+            "total_stored": 0,
+            "duplicates_skipped": 0,
+            "total_queries": 0,
+            "last_store_time": None,
+            "last_prune_time": None,
+        }
+
+    async def initialize(self) -> None:
+        """
+        Create database and tables if they don't exist.
+        Must be called once during application startup.
+        """
+        # Ensure data directory exists
+        DB_DIR.mkdir(parents=True, exist_ok=True)
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS signals (
+                    signal_id TEXT PRIMARY KEY,
+                    signal_type TEXT NOT NULL,
+                    zone_id TEXT NOT NULL,
+                    zone_name TEXT NOT NULL,
+                    lat REAL NOT NULL,
+                    lng REAL NOT NULL,
+                    value REAL NOT NULL,
+                    severity INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    metadata TEXT DEFAULT '{}',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Indexes for fast queries
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signals_zone_time 
+                ON signals(zone_id, timestamp DESC)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signals_type 
+                ON signals(signal_type)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signals_source 
+                ON signals(source)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signals_severity 
+                ON signals(severity DESC)
+            """)
+            
+            await db.commit()
+        
+        self._initialized = True
+        logger.info(f"✓ SignalStore initialized at {self._db_path}")
 
     async def store_signals(self, signals: List[Dict]) -> int:
-        """Store a batch of signals. Returns count stored."""
-        stored = 0
-        for signal in signals:
-            zone_id = signal.get("zone_id", "unknown")
-            self._store[zone_id].append(signal)
-            stored += 1
+        """
+        Store a batch of signals with deduplication.
         
-        # Prune old signals
-        self._prune_old()
+        Args:
+            signals: List of signal dictionaries matching the Signal schema.
+            
+        Returns:
+            Number of NEW signals stored (excludes duplicates).
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        stored = 0
+        duplicates = 0
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            for signal in signals:
+                try:
+                    await db.execute("""
+                        INSERT OR IGNORE INTO signals 
+                        (signal_id, signal_type, zone_id, zone_name, lat, lng, 
+                         value, severity, confidence, source, timestamp, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        signal["signal_id"],
+                        signal["signal_type"],
+                        signal["zone_id"],
+                        signal["zone_name"],
+                        signal["lat"],
+                        signal["lng"],
+                        signal["value"],
+                        signal["severity"],
+                        signal["confidence"],
+                        signal["source"],
+                        signal["timestamp"],
+                        json.dumps(signal.get("metadata", {})),
+                    ))
+                    
+                    if db.total_changes > 0:
+                        stored += 1
+                    else:
+                        duplicates += 1
+                        
+                except aiosqlite.IntegrityError:
+                    duplicates += 1
+                except Exception as e:
+                    logger.warning(f"Failed to store signal {signal.get('signal_id', '?')}: {e}")
+            
+            await db.commit()
+        
+        # Update metrics
+        self.metrics["total_stored"] += stored
+        self.metrics["duplicates_skipped"] += duplicates
+        self.metrics["last_store_time"] = datetime.utcnow().isoformat()
+        
+        if duplicates > 0:
+            logger.debug(f"Store: {stored} new, {duplicates} duplicates skipped")
         
         return stored
 
-    async def get_signals(self, zone_id: str, hours: int = 24) -> List:
-        """Get signals for a zone within the time window."""
-        from agents.agent_data_collector import Signal
+    async def get_signals(self, zone_id: str, hours: int = 24) -> List[Dict]:
+        """
+        Retrieve signals for a zone within a time window.
         
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
-        results = []
+        Args:
+            zone_id: The zone identifier (e.g., "islamabad-g10")
+            hours: How many hours back to look (default 24)
+            
+        Returns:
+            List of signal dictionaries, newest first.
+        """
+        if not self._initialized:
+            await self.initialize()
         
-        for signal_dict in self._store.get(zone_id, []):
-            try:
-                ts = signal_dict.get("timestamp", "")
-                signal_time = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                if signal_time > cutoff:
-                    results.append(Signal(**signal_dict))
-            except (ValueError, TypeError):
-                # If timestamp parsing fails, include anyway (recent)
-                results.append(Signal(**signal_dict))
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat() + "Z"
+        self.metrics["total_queries"] += 1
         
-        return results
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM signals 
+                WHERE zone_id = ? AND timestamp >= ?
+                ORDER BY timestamp DESC
+            """, (zone_id, cutoff))
+            
+            rows = await cursor.fetchall()
+        
+        return [self._row_to_dict(row) for row in rows]
 
-    async def get_all_zones_summary(self) -> Dict:
-        """Get summary stats for all zones."""
-        summary = {}
-        for zone_id, signals in self._store.items():
-            summary[zone_id] = {
-                "total_signals": len(signals),
-                "last_signal": signals[-1]["timestamp"] if signals else None,
-            }
-        return summary
-
-    def _prune_old(self):
-        """Remove signals older than max_age_hours."""
-        cutoff = datetime.utcnow() - timedelta(hours=self._max_age_hours)
+    async def get_signals_by_type(
+        self, zone_id: str, signal_type: str, hours: int = 24
+    ) -> List[Dict]:
+        """Get signals filtered by both zone and type."""
+        if not self._initialized:
+            await self.initialize()
         
-        for zone_id in list(self._store.keys()):
-            self._store[zone_id] = [
-                s for s in self._store[zone_id]
-                if self._is_recent(s.get("timestamp", ""), cutoff)
-            ]
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat() + "Z"
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM signals 
+                WHERE zone_id = ? AND signal_type = ? AND timestamp >= ?
+                ORDER BY timestamp DESC
+            """, (zone_id, signal_type, cutoff))
+            
+            rows = await cursor.fetchall()
+        
+        return [self._row_to_dict(row) for row in rows]
+
+    async def get_zone_summary(self, zone_id: str) -> Dict:
+        """Get summary statistics for a zone."""
+        if not self._initialized:
+            await self.initialize()
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            # Total signals
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM signals WHERE zone_id = ?", (zone_id,)
+            )
+            total = (await cursor.fetchone())[0]
+            
+            # Latest signal
+            cursor = await db.execute(
+                "SELECT timestamp FROM signals WHERE zone_id = ? ORDER BY timestamp DESC LIMIT 1",
+                (zone_id,)
+            )
+            row = await cursor.fetchone()
+            latest = row[0] if row else None
+            
+            # Signals by source
+            cursor = await db.execute("""
+                SELECT source, COUNT(*) as cnt 
+                FROM signals WHERE zone_id = ? 
+                GROUP BY source
+            """, (zone_id,))
+            by_source = {row[0]: row[1] for row in await cursor.fetchall()}
+        
+        return {
+            "zone_id": zone_id,
+            "total_signals": total,
+            "latest_signal": latest,
+            "signals_by_source": by_source,
+        }
+
+    async def get_all_metrics(self) -> Dict:
+        """Get comprehensive store metrics for the /metrics endpoint."""
+        if not self._initialized:
+            await self.initialize()
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            # Total signals in DB
+            cursor = await db.execute("SELECT COUNT(*) FROM signals")
+            total = (await cursor.fetchone())[0]
+            
+            # Signals by source
+            cursor = await db.execute("""
+                SELECT source, COUNT(*) as cnt FROM signals GROUP BY source
+            """)
+            by_source = {row[0]: row[1] for row in await cursor.fetchall()}
+            
+            # Signals by zone
+            cursor = await db.execute("""
+                SELECT zone_id, COUNT(*) as cnt FROM signals GROUP BY zone_id
+            """)
+            by_zone = {row[0]: row[1] for row in await cursor.fetchall()}
+            
+            # Last signal per zone
+            cursor = await db.execute("""
+                SELECT zone_id, MAX(timestamp) as last_ts 
+                FROM signals GROUP BY zone_id
+            """)
+            last_by_zone = {row[0]: row[1] for row in await cursor.fetchall()}
+            
+            # DB file size
+            db_size_mb = os.path.getsize(self._db_path) / (1024 * 1024) if os.path.exists(self._db_path) else 0
+        
+        return {
+            "database": {
+                "path": self._db_path,
+                "size_mb": round(db_size_mb, 2),
+                "total_signals": total,
+            },
+            "signals_by_source": by_source,
+            "signals_by_zone": by_zone,
+            "last_signal_per_zone": last_by_zone,
+            "runtime_metrics": self.metrics,
+        }
+
+    async def prune_expired(self) -> int:
+        """
+        Remove signals older than the buffer window.
+        Called automatically by the scheduler.
+        
+        Returns:
+            Number of signals deleted.
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        cutoff = (datetime.utcnow() - timedelta(hours=self._max_age_hours)).isoformat() + "Z"
+        
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM signals WHERE timestamp < ?", (cutoff,)
+            )
+            deleted = cursor.rowcount
+            await db.commit()
+        
+        if deleted > 0:
+            logger.info(f"🗑️ Pruned {deleted} expired signals (older than {settings.SIGNAL_BUFFER_DAYS} days)")
+        
+        self.metrics["last_prune_time"] = datetime.utcnow().isoformat()
+        return deleted
 
     @staticmethod
-    def _is_recent(timestamp_str: str, cutoff: datetime) -> bool:
-        """Check if a timestamp is more recent than cutoff."""
-        try:
-            ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")).replace(tzinfo=None)
-            return ts > cutoff
-        except:
-            return True  # Keep if we can't parse
-
-
-# ─── Firebase Integration (Production) ────────────────────────────────────────
-# Uncomment below when you have Firebase credentials set up.
-# For hackathon, the in-memory store above is sufficient.
-
-"""
-import firebase_admin
-from firebase_admin import credentials, firestore
-
-class FirestoreSignalStore(SignalStore):
-    def __init__(self):
-        super().__init__()
-        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-        firebase_admin.initialize_app(cred)
-        self.db = firestore.client()
-    
-    async def store_signals(self, signals: List[Dict]) -> int:
-        batch = self.db.batch()
-        for signal in signals:
-            doc_ref = self.db.collection("signals").document(signal["signal_id"])
-            batch.set(doc_ref, signal)
-        batch.commit()
-        return len(signals)
-    
-    async def get_signals(self, zone_id: str, hours: int = 24):
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
-        query = (self.db.collection("signals")
-                 .where("zone_id", "==", zone_id)
-                 .where("timestamp", ">=", cutoff.isoformat())
-                 .order_by("timestamp", direction=firestore.Query.DESCENDING))
-        docs = query.stream()
-        return [Signal(**doc.to_dict()) for doc in docs]
-"""
+    def _row_to_dict(row) -> Dict:
+        """Convert a sqlite Row to a signal dictionary."""
+        return {
+            "signal_id": row["signal_id"],
+            "signal_type": row["signal_type"],
+            "zone_id": row["zone_id"],
+            "zone_name": row["zone_name"],
+            "lat": row["lat"],
+            "lng": row["lng"],
+            "value": row["value"],
+            "severity": row["severity"],
+            "confidence": row["confidence"],
+            "source": row["source"],
+            "timestamp": row["timestamp"],
+            "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+        }

@@ -9,14 +9,19 @@ Exposes endpoints for Agent 3 (predictor) to consume.
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+from enum import Enum
 from datetime import datetime, timedelta
 import logging
+import math
 import asyncio
 
 from services.weather_service import WeatherService
 from services.traffic_service import TrafficService
 from services.social_service import SocialSignalService
+from services.openmeteo_service import OpenMeteoService
+from services.ndma_service import NDMAAlertService
 from services.signal_store import SignalStore
+from services.websocket_manager import ws_manager
 from config.settings import settings
 
 logger = logging.getLogger("ciro.agent2")
@@ -25,6 +30,8 @@ router = APIRouter()
 # Initialize services
 weather_service = WeatherService()
 traffic_service = TrafficService()
+openmeteo_service = OpenMeteoService()
+ndma_service = NDMAAlertService()
 social_service = SocialSignalService()
 signal_store = SignalStore()
 
@@ -56,7 +63,7 @@ class ZoneSignalSummary(BaseModel):
     total_signals: int
     max_severity: int
     avg_severity: float
-    signals: List[Signal]
+    signals: List[Dict]
     risk_indicators: Dict
 
 
@@ -88,53 +95,82 @@ async def agent_status():
     }
 
 
+@router.post("/backfill/{zone_id}")
+async def backfill_historical(zone_id: str, days: int = 30):
+    """
+    Backfill 30-day historical data from Open-Meteo (FREE).
+    Call this once per zone to populate the buffer with REAL weather data.
+    No API key needed — Open-Meteo is completely free.
+    """
+    zone = next((z for z in settings.ZONES if z["id"] == zone_id), None)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+
+    logger.info(f"📥 Backfilling {days}-day history for {zone['name']}...")
+    
+    # Fetch real historical data
+    historical_signals = await openmeteo_service.fetch_historical(zone, days_back=days)
+    
+    # Store in buffer
+    stored = await signal_store.store_signals(historical_signals)
+    
+    logger.info(f"📥 Backfill complete: {stored} historical signals stored for {zone['name']}")
+    
+    return {
+        "success": True,
+        "zone_id": zone_id,
+        "zone_name": zone["name"],
+        "days_backfilled": days,
+        "signals_stored": stored,
+        "source": "open_meteo_historical (FREE, real data)",
+    }
+
+
+@router.get("/flood-forecast/{zone_id}")
+async def get_flood_forecast(zone_id: str):
+    """
+    Get 30-day river discharge flood forecast from GloFAS via Open-Meteo.
+    Shows days where river discharge is above normal — direct flood risk.
+    """
+    zone = next((z for z in settings.ZONES if z["id"] == zone_id), None)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+
+    flood_signals = await openmeteo_service.fetch_flood_forecast(zone)
+    
+    return {
+        "zone_id": zone_id,
+        "zone_name": zone["name"],
+        "forecast_days": 30,
+        "elevated_days": len(flood_signals),
+        "source": "GloFAS via Open-Meteo (FREE)",
+        "flood_signals": flood_signals,
+    }
+
+
 @router.post("/fetch", response_model=FetchResult)
 async def fetch_all_signals(background_tasks: BackgroundTasks):
     """
-    Trigger a full fetch cycle — pulls data from all APIs for all zones.
-    This is the main entry point Agent 4 (orchestrator) calls.
+    Manually trigger a full fetch cycle.
+    
+    Pulls data from all 6 API sources for all monitored zones, stores in SQLite,
+    and broadcasts to WebSocket clients. Normally runs automatically every 15 min
+    via the scheduler — use this for manual/on-demand fetching.
+    
+    Called by: Agent 4 (orchestrator), manual testing, Flutter app refresh button.
     """
-    logger.info("📡 Agent 2: Starting full signal fetch cycle...")
-    
-    all_signals = []
-    errors = []
-
-    for zone in settings.ZONES:
-        try:
-            # Fetch weather data
-            weather_signals = await weather_service.fetch_for_zone(zone)
-            all_signals.extend(weather_signals)
-
-            # Fetch traffic data
-            traffic_signals = await traffic_service.fetch_for_zone(zone)
-            all_signals.extend(traffic_signals)
-
-            # Fetch social signals (simulated)
-            social_signals = await social_service.fetch_for_zone(zone)
-            all_signals.extend(social_signals)
-
-            logger.info(f"  ✓ {zone['name']}: {len(weather_signals) + len(traffic_signals) + len(social_signals)} signals")
-
-        except Exception as e:
-            error_msg = f"Error fetching {zone['name']}: {str(e)}"
-            logger.error(f"  ✗ {error_msg}")
-            errors.append(error_msg)
-
-    # Store signals in buffer
-    stored_count = await signal_store.store_signals(all_signals)
-    
-    logger.info(f"📡 Agent 2: Fetch complete. {stored_count} signals stored across {len(settings.ZONES)} zones.")
+    result = await run_fetch_cycle()
 
     return FetchResult(
-        success=len(errors) == 0,
+        success=result["success"],
         zones_processed=len(settings.ZONES),
-        signals_collected=stored_count,
+        signals_collected=result["signals_collected"],
         timestamp=datetime.utcnow().isoformat(),
-        errors=errors,
+        errors=result["errors"],
     )
 
 
-@router.get("/signals/{zone_id}", response_model=ZoneSignalSummary)
+@router.get("/signals/{zone_id}")
 async def get_zone_signals(zone_id: str, hours: int = 24):
     """
     Get latest signals for a specific zone.
@@ -154,7 +190,7 @@ async def get_zone_signals(zone_id: str, hours: int = 24):
             signals=[], risk_indicators={},
         )
 
-    severities = [s.severity for s in signals]
+    severities = [s["severity"] for s in signals]
     
     return ZoneSignalSummary(
         zone_id=zone_id,
@@ -228,7 +264,7 @@ async def list_zones():
     zone_summaries = []
     for zone in settings.ZONES:
         signals = await signal_store.get_signals(zone["id"], hours=24)
-        severities = [s.severity for s in signals] if signals else [0]
+        severities = [s["severity"] for s in signals] if signals else [0]
         zone_summaries.append({
             "zone_id": zone["id"],
             "name": zone["name"],
@@ -244,13 +280,13 @@ async def list_zones():
 
 # ─── Internal Helpers ──────────────────────────────────────────────────────────
 
-def _compute_risk_indicators(signals: List[Signal], zone: Dict) -> Dict:
+def _compute_risk_indicators(signals: List[Dict], zone: Dict) -> Dict:
     """Compute risk indicators from current signals."""
-    rain_signals = [s for s in signals if s.signal_type == "rainfall"]
-    temp_signals = [s for s in signals if s.signal_type == "temperature"]
+    rain_signals = [s for s in signals if s["signal_type"] == "rainfall"]
+    temp_signals = [s for s in signals if s["signal_type"] == "temperature"]
     
-    total_rain = sum(s.value for s in rain_signals) if rain_signals else 0
-    max_temp = max((s.value for s in temp_signals), default=0)
+    total_rain = sum(s["value"] for s in rain_signals) if rain_signals else 0
+    max_temp = max((s["value"] for s in temp_signals), default=0)
     
     # Simple flood risk heuristic
     flood_risk = min(1.0, (total_rain / 100) * (1 - zone["drainage_capacity"]))
@@ -267,13 +303,13 @@ def _compute_risk_indicators(signals: List[Signal], zone: Dict) -> Dict:
     }
 
 
-def _aggregate_daily(signals: List[Signal], days: int) -> List[Dict]:
+def _aggregate_daily(signals: List[Dict], days: int) -> List[Dict]:
     """Aggregate signals into daily summaries for ML model."""
     daily = {}
     
     for signal in signals:
         try:
-            dt = datetime.fromisoformat(signal.timestamp.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(signal["timestamp"].replace("Z", "+00:00"))
             day_key = dt.strftime("%Y-%m-%d")
         except:
             continue
@@ -292,21 +328,21 @@ def _aggregate_daily(signals: List[Signal], days: int) -> List[Dict]:
             }
         
         d = daily[day_key]
-        if signal.signal_type == "rainfall":
-            d["total_rainfall_mm"] += signal.value
-        elif signal.signal_type == "temperature":
-            d["max_temp_c"] = max(d["max_temp_c"], signal.value)
-            d["min_temp_c"] = min(d["min_temp_c"], signal.value)
-        elif signal.signal_type == "humidity":
-            d["avg_humidity"].append(signal.value)
-        elif signal.signal_type == "wind":
-            d["max_wind_kph"] = max(d["max_wind_kph"], signal.value)
-        elif signal.signal_type == "traffic":
-            d["traffic_congestion"] = max(d["traffic_congestion"], signal.value)
-        elif signal.signal_type == "social":
+        if signal["signal_type"] == "rainfall":
+            d["total_rainfall_mm"] += signal["value"]
+        elif signal["signal_type"] == "temperature":
+            d["max_temp_c"] = max(d["max_temp_c"], signal["value"])
+            d["min_temp_c"] = min(d["min_temp_c"], signal["value"])
+        elif signal["signal_type"] == "humidity":
+            d["avg_humidity"].append(signal["value"])
+        elif signal["signal_type"] == "wind":
+            d["max_wind_kph"] = max(d["max_wind_kph"], signal["value"])
+        elif signal["signal_type"] == "traffic":
+            d["traffic_congestion"] = max(d["traffic_congestion"], signal["value"])
+        elif signal["signal_type"] == "social":
             d["social_alert_count"] += 1
         
-        d["max_severity"] = max(d["max_severity"], signal.severity)
+        d["max_severity"] = max(d["max_severity"], signal["severity"])
     
     # Finalize averages
     for d in daily.values():
@@ -318,33 +354,33 @@ def _aggregate_daily(signals: List[Signal], days: int) -> List[Dict]:
     return sorted(daily.values(), key=lambda x: x["date"], reverse=True)[:days]
 
 
-def _compute_ml_features(signals: List[Signal], zone: Dict) -> Dict:
+def _compute_ml_features(signals: List[Dict], zone: Dict) -> Dict:
     """
     Compute the exact feature vector Agent 3's XGBoost model expects.
     Matches the feature table from our project doc.
     """
     now = datetime.utcnow()
     
-    rain_signals = [s for s in signals if s.signal_type == "rainfall"]
-    temp_signals = [s for s in signals if s.signal_type == "temperature"]
-    humidity_signals = [s for s in signals if s.signal_type == "humidity"]
+    rain_signals = [s for s in signals if s["signal_type"] == "rainfall"]
+    temp_signals = [s for s in signals if s["signal_type"] == "temperature"]
+    humidity_signals = [s for s in signals if s["signal_type"] == "humidity"]
     
     # Time-windowed aggregates
     def rain_in_window(hours):
         cutoff = now - timedelta(hours=hours)
-        return sum(s.value for s in rain_signals
-                   if datetime.fromisoformat(s.timestamp.replace("Z", "+00:00")).replace(tzinfo=None) > cutoff)
+        return sum(s["value"] for s in rain_signals
+                   if datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) > cutoff)
     
     def max_temp_in_window(hours):
         cutoff = now - timedelta(hours=hours)
-        temps = [s.value for s in temp_signals
-                 if datetime.fromisoformat(s.timestamp.replace("Z", "+00:00")).replace(tzinfo=None) > cutoff]
+        temps = [s["value"] for s in temp_signals
+                 if datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) > cutoff]
         return max(temps) if temps else 0
     
     def avg_humidity_in_window(hours):
         cutoff = now - timedelta(hours=hours)
-        hums = [s.value for s in humidity_signals
-                if datetime.fromisoformat(s.timestamp.replace("Z", "+00:00")).replace(tzinfo=None) > cutoff]
+        hums = [s["value"] for s in humidity_signals
+                if datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) > cutoff]
         return sum(hums) / len(hums) if hums else 0
     
     # Consecutive hot days (> 40°C)
@@ -352,8 +388,8 @@ def _compute_ml_features(signals: List[Signal], zone: Dict) -> Dict:
     for day_offset in range(30):
         day_start = now - timedelta(days=day_offset + 1)
         day_end = now - timedelta(days=day_offset)
-        day_temps = [s.value for s in temp_signals
-                     if day_start < datetime.fromisoformat(s.timestamp.replace("Z", "+00:00")).replace(tzinfo=None) < day_end]
+        day_temps = [s["value"] for s in temp_signals
+                     if day_start < datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None) < day_end]
         if day_temps and max(day_temps) > 40:
             consecutive_hot += 1
         else:
@@ -385,9 +421,86 @@ def _compute_ml_features(signals: List[Signal], zone: Dict) -> Dict:
         # Seasonal
         "month": now.month,
         "is_monsoon": 1 if now.month in [6, 7, 8, 9] else 0,
-        "month_sin": round(__import__("math").sin(2 * 3.14159 * now.month / 12), 4),
-        "month_cos": round(__import__("math").cos(2 * 3.14159 * now.month / 12), 4),
+        "month_sin": round(math.sin(2 * math.pi * now.month / 12), 4),
+        "month_cos": round(math.cos(2 * math.pi * now.month / 12), 4),
         
         # Placeholder for Agent 1 (imagery)
         "ndwi_delta": 0.0,  # Will be filled by Agent 1 when ready
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEDULER-CALLABLE FETCH CYCLE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def run_fetch_cycle() -> Dict:
+    """
+    Complete fetch cycle — called by APScheduler every FETCH_INTERVAL_MINUTES.
+    Also called manually by POST /fetch endpoint.
+    
+    Flow:
+      1. Fetch from all 6 data sources for each zone
+      2. Store in SQLite (with deduplication)
+      3. Broadcast new signals to WebSocket clients
+      4. Return summary
+    
+    Returns:
+        Dict with success status, signal counts, and any errors.
+    """
+    logger.info("📡 ═══ FETCH CYCLE START ═══")
+    
+    all_signals = []
+    errors = []
+    source_counts = {}
+
+    for zone in settings.ZONES:
+        try:
+            # 1. OpenWeatherMap
+            weather_signals = await weather_service.fetch_for_zone(zone)
+            all_signals.extend(weather_signals)
+            source_counts["openweathermap"] = source_counts.get("openweathermap", 0) + len(weather_signals)
+
+            # 2. Open-Meteo (FREE — no key!)
+            meteo_signals = await openmeteo_service.fetch_current_and_forecast(zone)
+            all_signals.extend(meteo_signals)
+            source_counts["open_meteo"] = source_counts.get("open_meteo", 0) + len(meteo_signals)
+
+            # 3. Google Maps Traffic
+            traffic_signals = await traffic_service.fetch_for_zone(zone)
+            all_signals.extend(traffic_signals)
+            source_counts["google_maps"] = source_counts.get("google_maps", 0) + len(traffic_signals)
+
+            # 4. NDMA Alerts
+            ndma_signals = await ndma_service.fetch_for_zone(zone)
+            all_signals.extend(ndma_signals)
+            source_counts["ndma"] = source_counts.get("ndma", 0) + len(ndma_signals)
+
+            # 5. Social Media Keywords
+            social_signals = await social_service.fetch_for_zone(zone)
+            all_signals.extend(social_signals)
+            source_counts["social"] = source_counts.get("social", 0) + len(social_signals)
+
+            logger.info(f"  ✓ {zone['name']}: {len(weather_signals) + len(meteo_signals) + len(traffic_signals) + len(ndma_signals) + len(social_signals)} signals")
+
+        except Exception as e:
+            error_msg = f"Error fetching {zone['name']}: {str(e)}"
+            logger.error(f"  ✗ {error_msg}")
+            errors.append(error_msg)
+
+    # Store in SQLite (deduplication handled by store)
+    stored_count = await signal_store.store_signals(all_signals)
+    
+    # Broadcast to WebSocket clients
+    ws_sent = await ws_manager.broadcast_signals(all_signals)
+
+    logger.info(f"📡 ═══ FETCH CYCLE COMPLETE ═══ {stored_count} stored, {ws_sent} WS messages, {len(errors)} errors")
+    logger.info(f"    Sources: {source_counts}")
+
+    return {
+        "success": len(errors) == 0,
+        "signals_collected": len(all_signals),
+        "signals_stored": stored_count,
+        "websocket_messages": ws_sent,
+        "source_counts": source_counts,
+        "errors": errors,
     }

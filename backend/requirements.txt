@@ -1,19 +1,27 @@
-# CIRO Backend — Requirements
+# CIRO Backend - Dependencies
+
+# Core Framework
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
 pydantic==2.9.0
 pydantic-settings==2.5.0
+websockets==12.0
+
+# HTTP Client
 httpx==0.27.0
 
-# ML (for Agent 3 — install now so it's ready)
+# Database
+aiosqlite==0.20.0
+
+# Scheduler
+apscheduler==3.10.4
+
+# ML (Agent 3)
 scikit-learn==1.5.0
 xgboost==2.1.0
 joblib==1.4.0
 pandas==2.2.0
 numpy==1.26.0
-
-# Firebase (uncomment when credentials ready)
-# firebase-admin==6.5.0
 
 # Utilities
 python-dotenv==1.0.1

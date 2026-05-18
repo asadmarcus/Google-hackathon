@@ -10,14 +10,22 @@ __pycache__/
 venv/
 env/
 
-# Models
+# Database (auto-created)
+data/signals.db
+data/*.db
+
+# Models (trained locally)
 models/saved_models/*.joblib
 models/saved_models/*.pkl
 
 # IDE
 .vscode/
 .idea/
+*.swp
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
