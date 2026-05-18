@@ -31,6 +31,7 @@ import sys
 from typing import Optional
 
 from agents.agent_data_collector import router as data_collector_router
+from agents.agent_predictor import router as predictor_router
 from services.signal_store import SignalStore
 from services.scheduler import CIROScheduler
 from services.websocket_manager import ws_manager
@@ -103,7 +104,7 @@ app = FastAPI(
 CIRO monitors Pakistani urban zones for flood and heatwave risks using:
 - **Agent 1** (planned): Satellite imagery via GeoGemma + Earth Engine
 - **Agent 2** (active): Real-time data collection from 6 API sources
-- **Agent 3** (planned): ML prediction (XGBoost, 30-day forecast)
+- **Agent 3** (active): ML prediction (XGBoost, 30-day forecast)
 - **Agent 4** (planned): Response orchestration & action simulation
 
 ### Data Sources (Agent 2):
@@ -140,6 +141,11 @@ app.include_router(
     prefix="/api/v1/agent2",
     tags=["Agent 2 — Data & API Collector"],
 )
+app.include_router(
+    predictor_router,
+    prefix="/api/v1/agent3",
+    tags=["Agent 3 — ML Predictor"],
+)
 
 
 # ─── Root Endpoints ────────────────────────────────────────────────────────────
@@ -153,7 +159,7 @@ async def api_root():
         "agents": {
             "agent_1": {"name": "Imagery & Geospatial", "status": "planned"},
             "agent_2": {"name": "Data & API Collector", "status": "active"},
-            "agent_3": {"name": "Predictive Model (ML)", "status": "planned"},
+            "agent_3": {"name": "Predictive Model (ML)", "status": "active"},
             "agent_4": {"name": "Response Orchestrator", "status": "planned"},
         },
         "websocket": "ws://host/ws/signals",

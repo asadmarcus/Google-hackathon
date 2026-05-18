@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CIRO — Agent 2 Control Panel</title>
+<title>CIRO — Control Panel</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
 :root {
@@ -23,6 +23,8 @@
   --red-dim: rgba(239, 68, 68, 0.12);
   --yellow: #eab308;
   --yellow-dim: rgba(234, 179, 8, 0.12);
+  --purple: #a855f7;
+  --purple-dim: rgba(168, 85, 247, 0.12);
   --radius: 10px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --mono: 'SF Mono', Consolas, 'Courier New', monospace;
@@ -53,7 +55,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 .zone-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .zone-card .name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .zone-card .province { font-size: 11px; color: var(--text-muted); }
-.zone-card .stats { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--text-secondary); }
 .zone-card .severity-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
 .zone-card .severity-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
 
@@ -62,6 +63,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 .btn-primary:hover { background: #ea580c; }
 .btn-secondary { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
 .btn-secondary:hover { background: rgba(59,130,246,0.2); }
+.btn-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+.btn-purple:hover { background: rgba(168,85,247,0.25); }
 .btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -100,6 +103,31 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
 
+/* Agent 3 */
+.alert-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
+.alert-LOW    { background: var(--green-dim); color: var(--green); }
+.alert-MODERATE { background: var(--yellow-dim); color: var(--yellow); }
+.alert-HIGH   { background: var(--red-dim); color: var(--red); }
+.alert-CRITICAL { background: var(--red); color: #fff; }
+
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.summary-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.summary-card .s-val { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+.summary-card .s-lbl { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+.forecast-chart { display: flex; align-items: stretch; gap: 3px; height: 100px; padding: 4px 0; }
+.forecast-bar { flex: 1; min-width: 0; border-radius: 3px 3px 0 0; transition: opacity 0.1s; cursor: pointer; position: relative; }
+.forecast-bar:hover { opacity: 0.8; }
+
+.chart-legend { display: flex; gap: 16px; font-size: 11px; color: var(--text-secondary); margin-top: 6px; }
+.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+.model-info-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(45,58,74,0.4); font-size: 12px; }
+.model-info-row:last-child { border-bottom: none; }
+.model-info-row .mi-key { color: var(--text-muted); }
+.model-info-row .mi-val { font-family: var(--mono); color: var(--text); }
+
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
@@ -107,7 +135,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 <body>
 
 <div class="header">
-  <h1><span>CIRO</span> Agent 2 — Control Panel</h1>
+  <h1><span>CIRO</span> Control Panel</h1>
   <div class="status-badge"><div class="dot"></div>LIVE</div>
 </div>
 
@@ -118,9 +146,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
   <div class="stat-card"><div class="label">Max Severity</div><div class="value" id="stat-max-sev">—</div><div class="sub">Current 24h</div></div>
 </div>
 
+<!-- Agent 2 Quick Actions -->
 <div class="section">
   <div class="section-header">
-    <h3><i class="fa-solid fa-bolt" style="color:var(--accent);margin-right:8px"></i>Quick Actions</h3>
+    <h3><i class="fa-solid fa-bolt" style="color:var(--accent);margin-right:8px"></i>Agent 2 — Data Collection</h3>
   </div>
   <div class="section-body">
     <div class="actions">
@@ -132,6 +161,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
   </div>
 </div>
 
+<!-- Zones -->
 <div class="section">
   <div class="section-header">
     <h3><i class="fa-solid fa-location-dot" style="color:var(--blue);margin-right:8px"></i>Monitored Zones</h3>
@@ -142,6 +172,33 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
   </div>
 </div>
 
+<!-- Agent 3 Predictor -->
+<div class="section" style="border-color:rgba(168,85,247,0.35)">
+  <div class="section-header">
+    <h3><i class="fa-solid fa-brain" style="color:var(--purple);margin-right:8px"></i>Agent 3 — ML Predictor <span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px">XGBoost · 30-day flood &amp; heatstroke forecast</span></h3>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm btn-secondary" onclick="loadModelInfo()" id="btn-model-info"><i class="fa-solid fa-circle-info"></i> Model Info</button>
+      <button class="btn btn-sm btn-danger" onclick="retrainModel()" id="btn-retrain"><i class="fa-solid fa-rotate"></i> Retrain</button>
+    </div>
+  </div>
+  <div class="section-body">
+    <div class="actions" style="margin-bottom:16px">
+      <button class="btn btn-purple" onclick="runPredict()" id="btn-predict">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> Predict 30 Days
+      </button>
+      <span id="predict-zone-label" style="font-size:12px;color:var(--text-muted);align-self:center">for <b id="pzone-name">G-10, Islamabad</b></span>
+    </div>
+    <div id="agent3-body">
+      <div class="empty-state" style="padding:30px">
+        <i class="fa-solid fa-chart-line" style="color:var(--purple);opacity:0.4"></i>
+        <div>Select a zone above, then click <b style="color:var(--purple)">Predict 30 Days</b>.</div>
+        <div style="font-size:11px;margin-top:6px">First run trains XGBoost (~30s). Subsequent runs are instant.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Agent 2 Data View -->
 <div class="section">
   <div class="section-header">
     <h3><i class="fa-solid fa-signal" style="color:var(--green);margin-right:8px"></i>Data View</h3>
@@ -152,7 +209,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
     </div>
   </div>
   <div class="section-body" id="data-body">
-    <div class="empty-state"><i class="fa-solid fa-database"></i>Click a zone, then use Quick Actions to load data.</div>
+    <div class="empty-state"><i class="fa-solid fa-database"></i>Click a zone, then use Agent 2 actions to load data.</div>
   </div>
 </div>
 
@@ -162,12 +219,13 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
     <button class="btn btn-sm btn-danger" onclick="clearLog()"><i class="fa-solid fa-trash"></i> Clear</button>
   </div>
   <div class="section-body">
-    <div class="log-area" id="log"><div class="log-entry info">[System] Ready. Select a zone and click "Fetch All Signals" to start.</div></div>
+    <div class="log-area" id="log"><div class="log-entry info">[System] Ready. Select a zone and use Agent 2 or Agent 3 actions.</div></div>
   </div>
 </div>
 
 <script>
-const API = window.location.origin + '/api/v1/agent2';
+const API2 = window.location.origin + '/api/v1/agent2';
+const API3 = window.location.origin + '/api/v1/agent3';
 const zones = ['islamabad-g10', 'lahore-city', 'karachi-south', 'peshawar-city', 'multan-city'];
 const zoneNames = {'islamabad-g10':'G-10, Islamabad','lahore-city':'Lahore City','karachi-south':'Karachi South','peshawar-city':'Peshawar City','multan-city':'Multan City'};
 const zoneProvinces = {'islamabad-g10':'Federal','lahore-city':'Punjab','karachi-south':'Sindh','peshawar-city':'KPK','multan-city':'Punjab'};
@@ -181,7 +239,6 @@ function log(msg, type='info') {
   el.scrollTop = el.scrollHeight;
 }
 function clearLog() { document.getElementById('log').innerHTML = ''; }
-
 function sevClass(s) { return s <= 3 ? 'sev-low' : s <= 6 ? 'sev-med' : 'sev-high'; }
 function sevColor(s) { return s <= 3 ? 'var(--green)' : s <= 6 ? 'var(--yellow)' : 'var(--red)'; }
 
@@ -193,7 +250,7 @@ function switchTab(tab) {
   });
   if (tab === 'signals') {
     log(`Loading signals for ${zoneNames[selectedZone]}...`);
-    fetch(`${API}/signals/${selectedZone}?hours=24`)
+    fetch(`${API2}/signals/${selectedZone}?hours=24`)
       .then(r => r.json())
       .then(data => { renderSignals(data); log(`${zoneNames[selectedZone]}: ${data.total_signals} signals`, 'success'); })
       .catch(e => log(`Failed: ${e.message}`, 'error'));
@@ -215,12 +272,12 @@ function renderZones() {
 
 async function selectZone(z) {
   selectedZone = z;
+  document.getElementById('pzone-name').textContent = zoneNames[z];
   renderZones();
-  // Reload data for whichever tab is active
   if (currentTab === 'signals') {
     log(`Loading signals for ${zoneNames[z]}...`);
     try {
-      const res = await fetch(`${API}/signals/${z}?hours=24`);
+      const res = await fetch(`${API2}/signals/${z}?hours=24`);
       const data = await res.json();
       renderSignals(data);
       log(`${zoneNames[z]}: ${data.total_signals} signals loaded`, 'success');
@@ -261,7 +318,7 @@ async function fetchAll() {
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching...';
   log('Triggering full fetch cycle (6 sources x 5 zones)...', 'info');
   try {
-    const res = await fetch(`${API}/fetch`, {method:'POST'});
+    const res = await fetch(`${API2}/fetch`, {method:'POST'});
     const data = await res.json();
     log(`DONE: ${data.signals_collected} signals collected from ${data.zones_processed} zones`, 'success');
     document.getElementById('stat-signals').textContent = data.signals_collected;
@@ -280,7 +337,7 @@ async function backfillAll() {
   let total = 0;
   for (const z of zones) {
     try {
-      const res = await fetch(`${API}/backfill/${z}?days=30`, {method:'POST'});
+      const res = await fetch(`${API2}/backfill/${z}?days=30`, {method:'POST'});
       const data = await res.json();
       total += data.signals_stored || 0;
       log(`  ${zoneNames[z]}: ${data.signals_stored} historical signals`, 'success');
@@ -295,7 +352,7 @@ async function loadFeatures() {
   const z = selectedZone;
   log(`Loading ML features for ${zoneNames[z]}...`);
   try {
-    const res = await fetch(`${API}/features/${z}`);
+    const res = await fetch(`${API2}/features/${z}`);
     const data = await res.json();
     renderFeatures(data);
     log(`ML features loaded for ${zoneNames[z]}`, 'success');
@@ -322,7 +379,7 @@ async function loadFloodForecast() {
   const z = selectedZone;
   log(`Loading 30-day flood forecast for ${zoneNames[z]}...`);
   try {
-    const res = await fetch(`${API}/flood-forecast/${z}`);
+    const res = await fetch(`${API2}/flood-forecast/${z}`);
     const data = await res.json();
     renderFlood(data);
     log(`Flood forecast: ${data.elevated_days} elevated days in next 30d`, data.elevated_days > 3 ? 'warn' : 'success');
@@ -348,7 +405,7 @@ function renderFlood(data) {
 
 async function loadZoneStats() {
   try {
-    const res = await fetch(`${API}/zones`);
+    const res = await fetch(`${API2}/zones`);
     const data = await res.json();
     let maxSev = 0;
     if (data.zones) data.zones.forEach(z => {
@@ -359,6 +416,190 @@ async function loadZoneStats() {
     document.getElementById('stat-max-sev').textContent = maxSev;
     document.getElementById('stat-max-sev').style.color = sevColor(maxSev);
   } catch(e) {}
+}
+
+// ─── Agent 3 ────────────────────────────────────────────────────────────────
+
+async function runPredict() {
+  const btn = document.getElementById('btn-predict');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="border-top-color:var(--purple)"></span> Predicting...';
+  const z = selectedZone;
+  log(`Agent 3: running 30-day prediction for ${zoneNames[z]}...`, 'info');
+  log('  (First run trains XGBoost — may take ~30s)', 'info');
+
+  try {
+    const res = await fetch(`${API3}/predict/${z}`, {method:'POST'});
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    renderPrediction(data);
+    log(`Agent 3: ${zoneNames[z]} — peak flood=${data.summary.peak_flood_risk.toFixed(2)} (day ${data.summary.peak_flood_day}), peak heat=${data.summary.peak_heat_risk.toFixed(2)} (day ${data.summary.peak_heat_day}), alert=${data.summary.overall_alert_level}`,
+      data.summary.overall_alert_level === 'CRITICAL' || data.summary.overall_alert_level === 'HIGH' ? 'warn' : 'success');
+  } catch(e) {
+    log(`Agent 3 predict failed: ${e.message}`, 'error');
+    document.getElementById('agent3-body').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation" style="color:var(--red)"></i><div style="color:var(--red)">${e.message}</div><div style="font-size:11px;margin-top:8px">Make sure the server is running and Agent 2 has data. Try "Fetch All Signals" first.</div></div>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Predict 30 Days';
+}
+
+function riskColor(v) {
+  if (v >= 0.75) return 'var(--red)';
+  if (v >= 0.5)  return 'var(--yellow)';
+  if (v >= 0.25) return 'var(--blue)';
+  return 'var(--green)';
+}
+
+function renderPrediction(data) {
+  const s = data.summary;
+  const preds = data.predictions;
+
+  const maxFlood = Math.max(...preds.map(p => p.flood_risk), 0.01);
+  const maxHeat  = Math.max(...preds.map(p => p.heatstroke_risk), 0.01);
+  const chartMax = Math.max(maxFlood, maxHeat, 0.3);
+
+  // Summary cards
+  let html = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary)">30-Day Outlook — <b style="color:var(--text)">${data.zone_name}</b></div>
+      <span class="alert-badge alert-${s.overall_alert_level}">${s.overall_alert_level}</span>
+      <span style="font-size:11px;color:var(--text-muted)">as of ${new Date(data.predicted_at).toLocaleString()}</span>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="s-val" style="color:${riskColor(s.peak_flood_risk)}">${(s.peak_flood_risk*100).toFixed(0)}%</div>
+        <div class="s-lbl">Peak Flood Risk<br>Day ${s.peak_flood_day}</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:${riskColor(s.peak_heat_risk)}">${(s.peak_heat_risk*100).toFixed(0)}%</div>
+        <div class="s-lbl">Peak Heat Risk<br>Day ${s.peak_heat_day}</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:var(--blue)">${(s.avg_flood_risk*100).toFixed(0)}%</div>
+        <div class="s-lbl">Avg Flood Risk<br>30-day mean</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:var(--accent)">${(s.avg_heat_risk*100).toFixed(0)}%</div>
+        <div class="s-lbl">Avg Heat Risk<br>30-day mean</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:${s.high_flood_days > 5 ? 'var(--red)' : 'var(--text)'}">${s.high_flood_days}</div>
+        <div class="s-lbl">High Flood Days<br>risk &gt; 60%</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:${s.high_heat_days > 5 ? 'var(--red)' : 'var(--text)'}">${s.high_heat_days}</div>
+        <div class="s-lbl">High Heat Days<br>risk &gt; 60%</div>
+      </div>
+    </div>`;
+
+  // Bar chart — flood (blue) and heat (orange) stacked side-by-side
+  html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em">30-Day Risk Chart</div>
+    <div class="forecast-chart" id="forecast-chart" style="height:120px">`;
+
+  preds.forEach(p => {
+    const fh = Math.round((p.flood_risk / chartMax) * 100);
+    const hh = Math.round((p.heatstroke_risk / chartMax) * 100);
+    const fc = p.flood_risk >= 0.75 ? '#ef4444' : p.flood_risk >= 0.5 ? '#eab308' : '#3b82f6';
+    const hc = p.heatstroke_risk >= 0.75 ? '#ef4444' : p.heatstroke_risk >= 0.5 ? '#f97316' : 'rgba(249,115,22,0.4)';
+    html += `<div style="flex:1;height:100%;display:flex;align-items:flex-end;gap:1px" title="Day ${p.day} | Flood: ${(p.flood_risk*100).toFixed(0)}% | Heat: ${(p.heatstroke_risk*100).toFixed(0)}%">
+      <div style="flex:1;height:${fh}%;background:${fc};border-radius:2px 2px 0 0;min-height:2px"></div>
+      <div style="flex:1;height:${hh}%;background:${hc};border-radius:2px 2px 0 0;min-height:2px"></div>
+    </div>`;
+  });
+
+  html += `</div>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:4px">
+      <span>Day 1</span><span>Day 10</span><span>Day 20</span><span>Day 30</span>
+    </div>
+    <div class="chart-legend" style="margin-top:8px">
+      <span><span class="legend-dot" style="background:var(--blue)"></span>Flood Risk</span>
+      <span><span class="legend-dot" style="background:var(--accent)"></span>Heat Risk</span>
+      <span style="color:var(--text-muted)">Hover bars for exact values</span>
+    </div>
+  </div>`;
+
+  // Day-by-day table (collapsible via "Show Table")
+  html += `<details style="margin-top:4px">
+    <summary style="cursor:pointer;font-size:12px;color:var(--purple);padding:4px 0;user-select:none">Show Day-by-Day Table</summary>
+    <div style="overflow-x:auto;margin-top:10px">
+    <table class="signal-table">
+      <thead><tr><th>Day</th><th>Flood Risk</th><th>Heat Risk</th><th>Dominant Factor</th></tr></thead>
+      <tbody>`;
+
+  preds.forEach(p => {
+    html += `<tr>
+      <td style="font-family:var(--mono)">Day ${p.day}</td>
+      <td><span style="font-family:var(--mono);color:${riskColor(p.flood_risk)}">${(p.flood_risk*100).toFixed(1)}%</span></td>
+      <td><span style="font-family:var(--mono);color:${riskColor(p.heatstroke_risk)}">${(p.heatstroke_risk*100).toFixed(1)}%</span></td>
+      <td style="color:var(--text-muted);font-size:11px">${p.dominant_factor}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></details>`;
+
+  document.getElementById('agent3-body').innerHTML = html;
+}
+
+async function loadModelInfo() {
+  log('Fetching Agent 3 model info...', 'info');
+  const btn = document.getElementById('btn-model-info');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API3}/model/info`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const m = await res.json();
+    const rows = [
+      ['Version',        m.model_version],
+      ['Type',           m.model_type],
+      ['Trained',        new Date(m.training_date).toLocaleString()],
+      ['Samples',        m.training_samples.toLocaleString()],
+      ['Source',         m.training_source],
+      ['Flood AUC',      m.flood_model_auc.toFixed(4)],
+      ['Heat AUC',       m.heat_model_auc.toFixed(4)],
+      ['Flood Accuracy', (m.flood_model_accuracy * 100).toFixed(1) + '%'],
+      ['Heat Accuracy',  (m.heat_model_accuracy * 100).toFixed(1) + '%'],
+    ];
+    const html = rows.map(([k,v]) =>
+      `<div class="model-info-row"><span class="mi-key">${k}</span><span class="mi-val">${v}</span></div>`
+    ).join('');
+    document.getElementById('agent3-body').innerHTML =
+      `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;max-width:520px">
+         <div style="font-size:12px;font-weight:600;color:var(--purple);margin-bottom:10px">XGBoost Model Info</div>
+         ${html}
+         <div style="margin-top:14px">
+           <button class="btn btn-purple btn-sm" onclick="runPredict()"><i class="fa-solid fa-wand-magic-sparkles"></i> Predict 30 Days</button>
+         </div>
+       </div>`;
+    log(`Model: AUC flood=${m.flood_model_auc.toFixed(3)} heat=${m.heat_model_auc.toFixed(3)} | trained ${new Date(m.training_date).toLocaleString()}`, 'success');
+  } catch(e) {
+    log(`Model info failed: ${e.message}`, 'error');
+    if (e.message.includes('503') || e.message.includes('502')) {
+      log('Tip: Click "Predict 30 Days" first — model trains on first predict call', 'info');
+    }
+  }
+  btn.disabled = false;
+}
+
+async function retrainModel() {
+  if (!confirm('Retrain model from scratch? Takes ~30s.')) return;
+  const btn = document.getElementById('btn-retrain');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Retraining...';
+  log('Triggering model retrain (runs in background)...', 'info');
+  try {
+    const res = await fetch(`${API3}/retrain`, {method:'POST'});
+    const data = await res.json();
+    log(`Retrain started: ${data.message}`, 'success');
+  } catch(e) {
+    log(`Retrain failed: ${e.message}`, 'error');
+  }
+  setTimeout(() => {
+    btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Retrain';
+  }, 3000);
 }
 
 // Init

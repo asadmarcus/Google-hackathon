@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_CREDENTIALS_PATH: str = ""  # Path to service account JSON
 
+    # Agent 2 ↔ Agent 3 internal API URL
+    AGENT2_BASE_URL: str = "http://localhost:8000"
+
     # Agent 2 Config
     FETCH_INTERVAL_MINUTES: int = 15  # How often to poll APIs
     SIGNAL_BUFFER_DAYS: int = 30  # Rolling buffer size
