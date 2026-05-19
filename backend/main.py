@@ -33,6 +33,8 @@ from typing import Optional
 from agents.agent_data_collector import router as data_collector_router
 from agents.agent_predictor import router as predictor_router
 from agents.agent_imagery import router as imagery_router
+from agents.agent_debater import router as debater_router
+from agents.agent_orchestrator import router as orchestrator_router, orchestrator
 from services.earth_engine_service import get_earth_engine_service
 from services.signal_store import SignalStore
 from services.scheduler import CIROScheduler
@@ -90,6 +92,9 @@ async def lifespan(app: FastAPI):
         fetch_callback=run_fetch_cycle,
         prune_callback=signal_store.prune_expired,
     )
+
+    # 3. Register AI orchestrator job (runs every ORCHESTRATOR_INTERVAL_HOURS)
+    scheduler.add_orchestrator_job(orchestrator.run_cycle)
 
     logger.info("🚀 CIRO Backend ready — accepting connections")
     logger.info("")
@@ -157,6 +162,16 @@ app.include_router(
     prefix="/api/v1/agent1",
     tags=["Agent 1 — Imagery & Geospatial"],
 )
+app.include_router(
+    debater_router,
+    prefix="/api/v1/debater",
+    tags=["Debater — LLM Multi-Persona Debate"],
+)
+app.include_router(
+    orchestrator_router,
+    prefix="/api/v1/orchestrator",
+    tags=["Orchestrator — AI Pipeline Coordinator"],
+)
 
 
 # ─── Root Endpoints ────────────────────────────────────────────────────────
@@ -170,8 +185,10 @@ async def api_root():
         "agents": {
             "agent_1": {"name": "Imagery & Geospatial", "status": "active"},
             "agent_2": {"name": "Data & API Collector", "status": "active"},
-            "agent_3": {"name": "Predictive Model (ML)", "status": "active"},
-            "agent_4": {"name": "Response Orchestrator", "status": "planned"},
+            "agent_3_ml": {"name": "ML Predictor (XGBoost)", "status": "active"},
+            "debater": {"name": "LLM Multi-Persona Debate (Gemini)", "status": "active"},
+            "orchestrator": {"name": "AI Pipeline Coordinator", "status": "active"},
+            "agent_4": {"name": "Response Dispatcher", "status": "planned"},
         },
         "websocket": "ws://host/ws/signals",
         "docs": "/docs",

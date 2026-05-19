@@ -186,6 +186,7 @@ class PredictionSummary(BaseModel):
     high_flood_days: int
     high_heat_days: int
     overall_alert_level: str
+    dominant_factor: str         # Factor driving the highest-risk day
 
 
 class ZonePrediction(BaseModel):
@@ -1312,20 +1313,24 @@ class RiskPredictor:
         
         peak_flood_idx = int(np.argmax(flood_risks))
         peak_heat_idx = int(np.argmax(heat_risks))
-        
+
         avg_flood = float(np.mean(flood_risks))
         avg_heat = float(np.mean(heat_risks))
         max_risk = max(max(flood_risks), max(heat_risks))
-        
+
         if max_risk >= 0.75:
-            alert = "CRITICAL"   # Genuine emergency — 2022 flood level
+            alert = "CRITICAL"
         elif max_risk >= 0.50:
-            alert = "HIGH"       # Active heatwave / heavy monsoon rain
+            alert = "HIGH"
         elif max_risk >= 0.25:
-            alert = "MODERATE"   # Elevated conditions, monitor closely
+            alert = "MODERATE"
         else:
-            alert = "LOW"        # Normal — no action needed
-        
+            alert = "LOW"
+
+        # dominant_factor comes from whichever day carries the overall peak risk
+        peak_overall_idx = int(np.argmax([max(f, h) for f, h in zip(flood_risks, heat_risks)]))
+        dominant_factor = predictions[peak_overall_idx].dominant_factor
+
         return PredictionSummary(
             peak_flood_day=predictions[peak_flood_idx].day,
             peak_flood_risk=round(flood_risks[peak_flood_idx], 4),
@@ -1336,6 +1341,7 @@ class RiskPredictor:
             high_flood_days=sum(1 for r in flood_risks if r > 0.4),
             high_heat_days=sum(1 for r in heat_risks if r > 0.4),
             overall_alert_level=alert,
+            dominant_factor=dominant_factor,
         )
 
 

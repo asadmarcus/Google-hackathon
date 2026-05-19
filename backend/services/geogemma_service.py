@@ -21,11 +21,13 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from config.settings import settings
+
 logger = logging.getLogger("ciro.geogemma")
 
 # Gemini API configuration
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_MODEL = "gemini-2.0-flash"  # Vision-capable model
+GEMINI_MODEL = settings.DEBATE_LLM_MODEL
 
 
 class GeoGemmaAnalysis:

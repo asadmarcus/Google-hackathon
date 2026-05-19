@@ -119,6 +119,27 @@ class CIROScheduler:
             f"pruning daily at 03:00 UTC"
         )
 
+    def add_orchestrator_job(self, callback) -> None:
+        """Register the AI orchestrator job (called after scheduler.start)."""
+        hours = settings.ORCHESTRATOR_INTERVAL_HOURS
+        self._scheduler.add_job(
+            self._wrapped_orchestrator,
+            trigger=IntervalTrigger(hours=hours),
+            id="ai_orchestrator_cycle",
+            name=f"AI Orchestrator every {hours}h",
+            kwargs={"callback": callback},
+        )
+        logger.info(f"⏰ Orchestrator job registered — runs every {hours}h")
+
+    async def _wrapped_orchestrator(self, callback) -> None:
+        """Wrapper for orchestrator job."""
+        logger.info("🤖 AI Orchestrator cycle starting...")
+        try:
+            results = await callback()
+            logger.info(f"🤖 AI Orchestrator cycle complete — {len(results) if results else 0} zones debated")
+        except Exception as e:
+            logger.error(f"🤖 AI Orchestrator cycle failed: {e}")
+
     async def shutdown(self) -> None:
         """Gracefully shutdown the scheduler."""
         if self._is_running:

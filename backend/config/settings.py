@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings
 from typing import List, Dict
 import os
 
+# Absolute path to backend/.env — works regardless of where uvicorn is launched from
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+
 
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
@@ -21,6 +24,7 @@ class Settings(BaseSettings):
 
     # Google Gemini (GeoGemma) API
     GOOGLE_API_KEY: str = ""  # Gemini API key for satellite image analysis
+    GEMINI_API_KEY: str = ""  # Alias used in .env
 
     # Google Flood Hub API
     GOOGLE_FLOODHUB_API_KEY: str = ""  # Apply: https://developers.google.com/flood-forecasting
@@ -41,6 +45,14 @@ class Settings(BaseSettings):
     FETCH_INTERVAL_MINUTES: int = 15  # How often to poll APIs
     SIGNAL_BUFFER_DAYS: int = 30  # Rolling buffer size
     SEVERITY_THRESHOLD: float = 0.7  # Alert threshold
+    RISK_ALERT_THRESHOLD: float = 0.30
+    DEMO_MODE: bool = False
+    DEMO_FETCH_INTERVAL_SECONDS: int = 300
+
+    # Orchestrator + Debater Config
+    ORCHESTRATOR_INTERVAL_HOURS: int = 2
+    DEBATE_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    DEBATE_TEMPERATURE: float = 0.3
 
     # Monitored Zones (Pakistan-focused for hackathon)
     ZONES: List[Dict] = [
@@ -127,7 +139,7 @@ class Settings(BaseSettings):
     ]
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
         env_file_encoding = "utf-8"
 
 
