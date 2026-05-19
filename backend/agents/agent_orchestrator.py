@@ -222,7 +222,7 @@ class CIROOrchestrator:
             peak_heat = summary.get("peak_heat_risk", 0.0)
 
             if self._exceeds_threshold(prediction):
-                run_log.add_step("THRESHOLD_EXCEEDED", f"flood={peak_flood:.2f} heat={peak_heat:.2f} → ABOVE {settings.RISK_ALERT_THRESHOLD}", zone_id=zone_cfg["id"])
+                run_log.add_step("THRESHOLD_EXCEEDED", f"{zone_cfg['name']} — flood={peak_flood:.2f} heat={peak_heat:.2f} → ABOVE {settings.RISK_ALERT_THRESHOLD}", zone_id=zone_cfg["id"])
 
                 zone_context = {
                     "province": zone_cfg.get("province", "Unknown"),
@@ -243,7 +243,7 @@ class CIROOrchestrator:
                     "threshold": settings.RISK_ALERT_THRESHOLD,
                 })
             else:
-                run_log.add_step("ZONE_SAFE", f"flood={peak_flood:.2f} heat={peak_heat:.2f} → below threshold", zone_id=zone_cfg["id"], status="ok")
+                run_log.add_step("ZONE_SAFE", f"{zone_cfg['name']} — flood={peak_flood:.2f} heat={peak_heat:.2f} → below threshold", zone_id=zone_cfg["id"], status="ok")
 
         run_log.zones_evaluated = sum(1 for p in all_predictions if p is not None)
         run_log.zones_above_threshold = len(high_risk_zones)

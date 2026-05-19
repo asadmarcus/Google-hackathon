@@ -595,7 +595,7 @@ class _AgentsScreenState extends State<AgentsScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          ...steps.take(20).map<Widget>((step) {
+          ...steps.map<Widget>((step) {
             final status = step['status'] ?? 'ok';
             final statusColor = status == 'error' ? CiroTheme.red : status == 'skip' ? CiroTheme.yellow : CiroTheme.green;
 
@@ -622,8 +622,6 @@ class _AgentsScreenState extends State<AgentsScreen> {
               ),
             );
           }).toList(),
-          if (steps.length > 20)
-            Text('+${steps.length - 20} more steps', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
         ],
       ),
     );
