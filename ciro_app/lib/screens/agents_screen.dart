@@ -252,12 +252,7 @@ class _AgentsScreenState extends State<AgentsScreen> {
             if (actions.isNotEmpty) ...[
               Text('${actions.length} Planned Actions', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
               const SizedBox(height: 8),
-              ...actions.take(5).map<Widget>((a) => _buildActionItem(a)),
-              if (actions.length > 5)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('+${actions.length - 5} more actions', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
-                ),
+              ...actions.map<Widget>((a) => _buildActionItem(a)),
             ],
 
             // Simulation

@@ -8,7 +8,11 @@
       "Bash(gh api *)",
       "Bash(python3 -c \"import sys, base64; data=sys.stdin.read\\(\\).replace\\('\\\\n',''\\); open\\('D:/Wajahat/projects/Fuckathon/backend/data/training/FloodPrediction.csv','wb'\\).write\\(base64.b64decode\\(data\\)\\)\")",
       "PowerShell(gh api *)",
-      "PowerShell(\\(Get-Content \"D:\\\\Wajahat\\\\projects\\\\Fuckathon\\\\backend\\\\agents\\\\agent_predictor.py\"\\) | ForEach-Object { $i++; if \\($_ -match \"dominant\"\\) { \"$i`: $_\" } })"
+      "PowerShell(\\(Get-Content \"D:\\\\Wajahat\\\\projects\\\\Fuckathon\\\\backend\\\\agents\\\\agent_predictor.py\"\\) | ForEach-Object { $i++; if \\($_ -match \"dominant\"\\) { \"$i`: $_\" } })",
+      "Bash(Get-ChildItem -Path \"D:\\\\Wajahat\\\\projects\\\\Fuckathon\" -Recurse -Force)",
+      "Bash(Select-Object FullName)",
+      "mcp__claude_ai_tldraw__exec",
+      "mcp__claude_ai_tldraw__search"
     ]
   }
 }

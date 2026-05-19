@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'theme/ciro_theme.dart';
 import 'screens/home_screen.dart';
-import 'screens/alerts_screen.dart';
 import 'screens/live_map_screen.dart';
 import 'screens/agents_screen.dart';
 import 'screens/prediction_screen.dart';
@@ -46,7 +45,6 @@ class _AppShellState extends State<AppShell> {
 
   final List<Widget> _screens = const [
     HomeScreen(),
-    AlertsScreen(),
     AgentsScreen(),
     LiveMapScreen(),
   ];
@@ -114,10 +112,6 @@ class _AppShellState extends State<AppShell> {
             BottomNavigationBarItem(
               icon: Icon(Icons.home_rounded),
               label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.notifications_rounded),
-              label: 'Alerts',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.psychology_rounded),
