@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import '../models/zone.dart';
 import '../services/api_service.dart';
 import '../theme/ciro_theme.dart';
 
-/// AI Agents screen — shows the multi-agent debate system and response planning.
-/// Users can trigger a debate for any zone and see:
-/// - 3 expert personas arguing (Hydrologist, Meteorologist, Urban Planner)
-/// - Consensus reached
-/// - Agent 4 response plan with actions + before/after simulation
+/// AI Agents Pipeline screen.
+/// Shows orchestrator runs, debate results, Agent 4 response actions, and logs.
+/// No city selector, no individual debate/response buttons — only the full pipeline.
 class AgentsScreen extends StatefulWidget {
   const AgentsScreen({super.key});
 
@@ -17,30 +14,44 @@ class AgentsScreen extends StatefulWidget {
 
 class _AgentsScreenState extends State<AgentsScreen> {
   final ApiService _api = ApiService();
-  String _selectedZone = 'sukkur-city';
-  Map<String, dynamic>? _debateResult;
-  Map<String, dynamic>? _responsePlan;
-  Map<String, dynamic>? _orchestratorResult;
-  bool _loadingDebate = false;
-  bool _loadingResponse = false;
-  bool _loadingOrchestrator = false;
+  Map<String, dynamic>? _pipelineResult;
+  List<dynamic>? _logs;
+  Map<String, dynamic>? _selectedLog;
+  bool _loadingPipeline = false;
+  bool _loadingLogs = false;
 
-  Future<void> _runDebate() async {
-    setState(() { _loadingDebate = true; _debateResult = null; _responsePlan = null; });
-    final result = await _api.runDebate(_selectedZone);
-    setState(() { _debateResult = result; _loadingDebate = false; });
-  }
-
-  Future<void> _runFullResponse() async {
-    setState(() { _loadingResponse = true; _responsePlan = null; });
-    final result = await _api.getResponsePlan(_selectedZone);
-    setState(() { _responsePlan = result; _loadingResponse = false; });
-  }
-
-  Future<void> _runOrchestrator() async {
-    setState(() { _loadingOrchestrator = true; _orchestratorResult = null; });
+  Future<void> _runPipeline() async {
+    setState(() { _loadingPipeline = true; _pipelineResult = null; });
     final result = await _api.runOrchestrator();
-    setState(() { _orchestratorResult = result; _loadingOrchestrator = false; });
+    setState(() { _pipelineResult = result; _loadingPipeline = false; });
+  }
+
+  Future<void> _fetchLogs() async {
+    setState(() { _loadingLogs = true; _logs = null; });
+    final result = await _api.getOrchestratorStatus();
+    // Fetch all logs
+    try {
+      final dio = ApiService().dio;
+      final resp = await dio.get('/api/v1/orchestrator/logs');
+      if (resp.statusCode == 200) {
+        setState(() { _logs = resp.data['logs'] ?? []; });
+      }
+    } catch (e) {
+      debugPrint('Logs fetch error: $e');
+    }
+    setState(() { _loadingLogs = false; });
+  }
+
+  Future<void> _fetchLogDetail(String runId) async {
+    try {
+      final dio = ApiService().dio;
+      final resp = await dio.get('/api/v1/orchestrator/logs/$runId');
+      if (resp.statusCode == 200) {
+        setState(() { _selectedLog = resp.data; });
+      }
+    } catch (e) {
+      debugPrint('Log detail error: $e');
+    }
   }
 
   @override
@@ -49,262 +60,113 @@ class _AgentsScreenState extends State<AgentsScreen> {
       backgroundColor: CiroTheme.bg,
       appBar: AppBar(
         backgroundColor: CiroTheme.surface,
-        title: const Text('AI Agent System', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        elevation: 0,
+        title: const Text('Orchestration Pipeline',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: CiroTheme.textPrimary)),
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: CiroTheme.green.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.circle, size: 8, color: CiroTheme.green),
-                SizedBox(width: 4),
-                Text('LIVE', style: TextStyle(color: CiroTheme.green, fontSize: 10, fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ),
+          _statusIndicator(),
+          const SizedBox(width: 12),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Zone selector
-          _buildZoneSelector(),
+          // Run pipeline button
+          _buildRunButton(),
           const SizedBox(height: 16),
 
-          // Full pipeline button
-          _buildActionButton(
-            '🚀 Run Full Pipeline',
-            'Evaluates all 8 zones → Debates high-risk → Plans response',
-            CiroTheme.green,
-            _loadingOrchestrator ? null : _runOrchestrator,
-            _loadingOrchestrator,
-          ),
-          const SizedBox(height: 12),
-
-          if (_loadingOrchestrator) _buildLoading('Running full AI pipeline across all zones...'),
-          if (_orchestratorResult != null) _buildOrchestratorResult(),
-          const SizedBox(height: 12),
-
-          // Action buttons
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionButton(
-                  '🧠 Run Debate',
-                  'Triggers 3 AI experts to analyze the crisis',
-                  CiroTheme.purple,
-                  _loadingDebate ? null : _runDebate,
-                  _loadingDebate,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildActionButton(
-                  '🎯 Full Response',
-                  'Debate + Plan + Simulate actions',
-                  CiroTheme.accent,
-                  _loadingResponse ? null : _runFullResponse,
-                  _loadingResponse,
-                ),
-              ),
+          // Pipeline result
+          if (_loadingPipeline) _buildLoadingState('Evaluating zones, running debates, planning responses...'),
+          if (_pipelineResult != null) ...[
+            _buildSummaryCard(),
+            const SizedBox(height: 14),
+            if ((_pipelineResult!['agent4_responses'] as List?)?.isNotEmpty ?? false) ...[
+              _buildSectionHeader('Response Actions'),
+              const SizedBox(height: 8),
+              ..._buildAgent4Responses(),
+              const SizedBox(height: 14),
             ],
-          ),
-          const SizedBox(height: 20),
-
-          // Debate results
-          if (_loadingDebate) _buildLoading('AI experts debating...'),
-          if (_debateResult != null) _buildDebateSection(),
-
-          // Response plan
-          if (_loadingResponse) _buildLoading('Planning response & simulating outcomes...'),
-          if (_responsePlan != null) _buildResponseSection(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildZoneSelector() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-      decoration: BoxDecoration(
-        color: CiroTheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: CiroTheme.border),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedZone,
-          isExpanded: true,
-          dropdownColor: CiroTheme.surface,
-          style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14),
-          items: CiroZone.allZones.map((z) => DropdownMenuItem(
-            value: z.id,
-            child: Text('${z.name} (${z.province})'),
-          )).toList(),
-          onChanged: (v) => setState(() => _selectedZone = v!),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton(String title, String subtitle, Color color, VoidCallback? onTap, bool loading) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Column(
-          children: [
-            if (loading)
-              SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: color))
-            else
-              Text(title, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text(subtitle, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10), textAlign: TextAlign.center),
+            if ((_pipelineResult!['agent4_queue'] as List?)?.isNotEmpty ?? false) ...[
+              _buildSectionHeader('Zones Requiring Action'),
+              const SizedBox(height: 8),
+              ..._buildActionQueue(),
+              const SizedBox(height: 14),
+            ],
+            if ((_pipelineResult!['full_results'] as List?)?.isNotEmpty ?? false) ...[
+              _buildSectionHeader('Expert Debate Transcripts'),
+              const SizedBox(height: 8),
+              ..._buildDebateResults(),
+            ],
           ],
-        ),
-      ),
-    );
-  }
 
-  Widget _buildLoading(String message) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: CiroTheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: CiroTheme.border),
-      ),
-      child: Column(
-        children: [
-          const CircularProgressIndicator(color: CiroTheme.accent, strokeWidth: 2),
-          const SizedBox(height: 12),
-          Text(message, style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 12)),
+          const SizedBox(height: 20),
+          _buildLogsButton(),
+          if (_loadingLogs) _buildLoadingState('Fetching orchestration logs...'),
+          if (_logs != null) _buildLogsList(),
+          if (_selectedLog != null) _buildLogDetail(),
         ],
       ),
     );
   }
 
-  // ─── Orchestrator Result ───────────────────────────────────────────
+  Widget _statusIndicator() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: CiroTheme.green.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: CiroTheme.green.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 6, height: 6, decoration: BoxDecoration(color: CiroTheme.green, borderRadius: BorderRadius.circular(3))),
+          const SizedBox(width: 6),
+          const Text('Active', style: TextStyle(color: CiroTheme.green, fontSize: 10, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildOrchestratorResult() {
-    final summary = _orchestratorResult?['summary'] as Map<String, dynamic>? ?? {};
-    final agent4Queue = (_orchestratorResult?['agent4_queue'] as List?) ?? [];
-    final fullResults = (_orchestratorResult?['full_results'] as List?) ?? [];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionTitle('PIPELINE RESULTS', Icons.rocket_launch),
-        const SizedBox(height: 10),
-
-        // Summary stats
-        Container(
-          padding: const EdgeInsets.all(14),
+  Widget _buildRunButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _loadingPipeline ? null : _runPipeline,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 18),
           decoration: BoxDecoration(
-            color: CiroTheme.surface,
+            gradient: LinearGradient(
+              colors: [CiroTheme.accent.withOpacity(0.15), CiroTheme.accent.withOpacity(0.05)],
+            ),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: CiroTheme.green.withOpacity(0.3)),
+            border: Border.all(color: CiroTheme.accent.withOpacity(0.3)),
           ),
           child: Column(
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _statBubble('${summary['total_zones_evaluated'] ?? 8}', 'Evaluated'),
-                  _statBubble('${summary['zones_above_threshold'] ?? 0}', 'High Risk'),
-                  _statBubble('${summary['zones_debated'] ?? 0}', 'Debated'),
-                  _statBubble('${summary['zones_for_agent4'] ?? 0}', 'Action Queue'),
-                ],
+              if (_loadingPipeline)
+                const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: CiroTheme.accent))
+              else
+                const Icon(Icons.play_arrow_rounded, color: CiroTheme.accent, size: 28),
+              const SizedBox(height: 8),
+              const Text('Run Full Pipeline', style: TextStyle(color: CiroTheme.accent, fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(
+                'Predict all zones  ·  Debate high-risk  ·  Plan response  ·  Simulate',
+                style: TextStyle(color: CiroTheme.textMuted, fontSize: 11),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
-
-        // Agent 4 Queue — zones needing response
-        if (agent4Queue.isNotEmpty) ...[
-          _sectionTitle('⚠️ ACTION QUEUE (${agent4Queue.length} zones)', Icons.warning_amber),
-          const SizedBox(height: 8),
-          ...agent4Queue.map((zone) => _buildQueueCard(zone)),
-          const SizedBox(height: 12),
-        ],
-
-        // Full debate results
-        if (fullResults.isNotEmpty) ...[
-          _sectionTitle('DEBATE TRANSCRIPTS (${fullResults.length})', Icons.forum),
-          const SizedBox(height: 8),
-          ...fullResults.map((result) => _buildFullDebateCard(result)),
-        ],
-      ],
-    );
-  }
-
-  Widget _statBubble(String value, String label) {
-    return Column(
-      children: [
-        Text(value, style: const TextStyle(color: CiroTheme.accent, fontSize: 22, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
-        const SizedBox(height: 2),
-        Text(label, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-
-  Widget _buildQueueCard(Map<String, dynamic> zone) {
-    final urgency = zone['urgency'] ?? '';
-    final urgColor = urgency == 'ACT_NOW' ? CiroTheme.red : urgency == 'PREPARE' ? CiroTheme.yellow : CiroTheme.green;
-    final prob = ((zone['primary_risk_probability'] ?? 0) * 100).toStringAsFixed(0);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: urgColor.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: urgColor.withOpacity(0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(child: Text(zone['zone_name'] ?? '', style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w700))),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: urgColor.withOpacity(0.2), borderRadius: BorderRadius.circular(6)),
-                child: Text(urgency, style: TextStyle(color: urgColor, fontSize: 10, fontWeight: FontWeight.w800)),
-              ),
-              const SizedBox(width: 8),
-              Text('$prob%', style: TextStyle(color: urgColor, fontSize: 18, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(zone['verdict'] ?? '', style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 12, height: 1.5)),
-          const SizedBox(height: 4),
-          Text('Action window: Days ${zone['action_window_days'] ?? []}', style: TextStyle(color: urgColor.withOpacity(0.7), fontSize: 10)),
-        ],
       ),
     );
   }
 
-  Widget _buildFullDebateCard(Map<String, dynamic> result) {
-    final zoneName = result['zone_name'] ?? '';
-    final trigger = result['trigger'] ?? '';
-    final personas = (result['personas'] as List?) ?? [];
-    final consensus = result['consensus'] as Map<String, dynamic>? ?? {};
-
+  Widget _buildSummaryCard() {
+    final summary = _pipelineResult!['summary'] as Map<String, dynamic>? ?? {};
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: CiroTheme.surface,
         borderRadius: BorderRadius.circular(12),
@@ -313,95 +175,407 @@ class _AgentsScreenState extends State<AgentsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(zoneName, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w700)),
-          Text(trigger, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
-          const SizedBox(height: 10),
-          ...personas.map((p) => _buildPersonaCard(p)),
-          if (consensus.isNotEmpty) _buildConsensusCard(consensus),
+          Row(
+            children: [
+              const Icon(Icons.analytics_outlined, color: CiroTheme.textSecondary, size: 16),
+              const SizedBox(width: 8),
+              const Text('Pipeline Summary', style: TextStyle(color: CiroTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              Text('${summary['duration_seconds'] ?? 0}s', style: const TextStyle(color: CiroTheme.textMuted, fontSize: 11, fontFamily: 'monospace')),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _metricTile('Evaluated', '${summary['total_zones_evaluated'] ?? 0}', CiroTheme.textPrimary),
+              _metricTile('High Risk', '${summary['zones_above_threshold'] ?? 0}', CiroTheme.yellow),
+              _metricTile('Debated', '${summary['zones_debated'] ?? 0}', CiroTheme.purple),
+              _metricTile('Responded', '${summary['zones_responded'] ?? 0}', CiroTheme.accent),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  // ─── Debate Section ──────────────────────────────────────────────
+  Widget _metricTile(String label, String value, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildDebateSection() {
-    final personas = (_debateResult?['personas'] as List?) ?? [];
-    final consensus = _debateResult?['consensus'] as Map<String, dynamic>? ?? {};
+  // ─── Agent 4 Responses ─────────────────────────────────────────
+
+  List<Widget> _buildAgent4Responses() {
+    final responses = (_pipelineResult!['agent4_responses'] as List?) ?? [];
+    return responses.map<Widget>((resp) {
+      final actions = (resp['actions'] as List?) ?? [];
+      final simulation = resp['simulation'] as Map<String, dynamic>? ?? {};
+      final narrative = resp['narrative'] ?? '';
+      final urgency = resp['urgency'] ?? '';
+      final zoneName = resp['zone_name'] ?? '';
+
+      final urgColor = urgency == 'ACT_NOW' ? CiroTheme.red : urgency == 'PREPARE' ? CiroTheme.yellow : CiroTheme.green;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: CiroTheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: urgColor.withOpacity(0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Expanded(child: Text(zoneName, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w700))),
+                _urgencyBadge(urgency, urgColor),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Narrative
+            if (narrative.isNotEmpty)
+              Text(narrative, style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 12, height: 1.6)),
+            const SizedBox(height: 12),
+
+            // Actions list
+            if (actions.isNotEmpty) ...[
+              Text('${actions.length} Planned Actions', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+              const SizedBox(height: 8),
+              ...actions.take(5).map<Widget>((a) => _buildActionItem(a)),
+              if (actions.length > 5)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('+${actions.length - 5} more actions', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
+                ),
+            ],
+
+            // Simulation
+            if (simulation.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildSimulationRow(simulation),
+            ],
+          ],
+        ),
+      );
+    }).toList();
+  }
+
+  Widget _buildActionItem(Map<String, dynamic> action) {
+    final category = action['category'] ?? '';
+    final desc = action['description'] ?? '';
+    final priority = action['priority'] ?? '';
+    final agency = action['responsible_agency'] ?? '';
+
+    final priorityColor = priority == 'IMMEDIATE' ? CiroTheme.red : priority == 'WITHIN_6H' ? CiroTheme.yellow : CiroTheme.green;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: CiroTheme.bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: CiroTheme.border.withOpacity(0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: CiroTheme.accent.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                child: Text(category, style: const TextStyle(color: CiroTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(color: priorityColor.withOpacity(0.1), borderRadius: BorderRadius.circular(3)),
+                child: Text(priority, style: TextStyle(color: priorityColor, fontSize: 8, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(desc, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 11, height: 1.4)),
+          if (agency.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(agency, style: TextStyle(color: CiroTheme.blue.withOpacity(0.7), fontSize: 10)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSimulationRow(Map<String, dynamic> sim) {
+    final before = sim['before'] as Map<String, dynamic>? ?? {};
+    final after = sim['after'] as Map<String, dynamic>? ?? {};
+    final effectiveness = ((sim['effectiveness_score'] ?? 0) * 100).toInt();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: CiroTheme.bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: CiroTheme.green.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Simulation Result', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
+              Text('$effectiveness% effective', style: TextStyle(color: CiroTheme.green, fontSize: 12, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _simMetric('Evacuated', '${after['population_evacuated'] ?? 0}')),
+              Expanded(child: _simMetric('Shelters', '${after['shelters_activated'] ?? 0}')),
+              Expanded(child: _simMetric('Medical', '${after['medical_units_deployed'] ?? 0}')),
+              Expanded(child: _simMetric('Lives Saved', '${after['estimated_lives_saved'] ?? 0}')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _simMetric(String label, String value) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
+        Text(label, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 8)),
+      ],
+    );
+  }
+
+  // ─── Action Queue ──────────────────────────────────────────────
+
+  List<Widget> _buildActionQueue() {
+    final queue = (_pipelineResult!['agent4_queue'] as List?) ?? [];
+    return queue.map<Widget>((zone) {
+      final urgency = zone['urgency'] ?? '';
+      final urgColor = urgency == 'ACT_NOW' ? CiroTheme.red : urgency == 'PREPARE' ? CiroTheme.yellow : CiroTheme.green;
+      final prob = ((zone['primary_risk_probability'] ?? 0) * 100).toStringAsFixed(0);
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: CiroTheme.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: urgColor.withOpacity(0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(zone['zone_name'] ?? '', style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w700))),
+                _urgencyBadge(urgency, urgColor),
+                const SizedBox(width: 8),
+                Text('$prob%', style: TextStyle(color: urgColor, fontSize: 16, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(zone['verdict'] ?? '', style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 11, height: 1.5)),
+          ],
+        ),
+      );
+    }).toList();
+  }
+
+  // ─── Debate Results ────────────────────────────────────────────
+
+  List<Widget> _buildDebateResults() {
+    final results = (_pipelineResult!['full_results'] as List?) ?? [];
+    return results.map<Widget>((result) {
+      final zoneName = result['zone_name'] ?? '';
+      final personas = (result['personas'] as List?) ?? [];
+      final consensus = result['consensus'] as Map<String, dynamic>? ?? {};
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: CiroTheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: CiroTheme.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(zoneName, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            // Personas
+            ...personas.map<Widget>((p) => _buildPersonaItem(p)),
+            // Consensus
+            if (consensus.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: CiroTheme.accent.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: CiroTheme.accent.withOpacity(0.2)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Consensus', style: TextStyle(color: CiroTheme.accent, fontSize: 10, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(consensus['verdict'] ?? '', style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 12, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Text(consensus['rationale'] ?? '', style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 11, height: 1.5)),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }).toList();
+  }
+
+  Widget _buildPersonaItem(Map<String, dynamic> p) {
+    final urgency = p['urgency'] ?? '';
+    final urgColor = urgency == 'ACT_NOW' ? CiroTheme.red : urgency == 'PREPARE' ? CiroTheme.yellow : CiroTheme.green;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 4, height: 4, margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(color: urgColor, borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(p['persona'] ?? '', style: TextStyle(color: CiroTheme.textPrimary, fontSize: 11, fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    Text('${((p['risk_vote'] ?? 0) * 100).toInt()}%', style: TextStyle(color: urgColor, fontSize: 11, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(p['assessment'] ?? '', style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10, height: 1.4)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Logs ──────────────────────────────────────────────────────
+
+  Widget _buildLogsButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _loadingLogs ? null : _fetchLogs,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: CiroTheme.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: CiroTheme.border),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.history, color: CiroTheme.textSecondary, size: 16),
+              const SizedBox(width: 8),
+              Text('View Run Logs', style: TextStyle(color: CiroTheme.textSecondary, fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogsList() {
+    if (_logs == null || _logs!.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text('No orchestration runs yet.', style: TextStyle(color: CiroTheme.textMuted, fontSize: 12)),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle('MULTI-AGENT DEBATE', Icons.psychology),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
+        ..._logs!.take(10).map<Widget>((log) {
+          final runId = log['run_id'] ?? '';
+          final startedAt = log['started_at'] ?? '';
+          final duration = log['duration_seconds'] ?? 0;
+          final debated = log['zones_debated'] ?? 0;
+          final responded = log['zones_responded'] ?? 0;
 
-        // Persona cards
-        ...personas.map((p) => _buildPersonaCard(p)),
-
-        // Consensus
-        if (consensus.isNotEmpty) _buildConsensusCard(consensus),
-        const SizedBox(height: 20),
+          return GestureDetector(
+            onTap: () => _fetchLogDetail(runId),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: CiroTheme.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _selectedLog?['run_id'] == runId ? CiroTheme.accent.withOpacity(0.5) : CiroTheme.border),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(runId, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 11, fontFamily: 'monospace')),
+                        const SizedBox(height: 2),
+                        Text(startedAt.toString().substring(0, 19), style: TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                  Text('${duration}s', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontFamily: 'monospace')),
+                  const SizedBox(width: 10),
+                  Text('$debated debated', style: TextStyle(color: CiroTheme.purple, fontSize: 10)),
+                  const SizedBox(width: 6),
+                  Text('$responded responded', style: TextStyle(color: CiroTheme.accent, fontSize: 10)),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
       ],
     );
   }
 
-  Widget _buildPersonaCard(Map<String, dynamic> persona) {
-    final name = persona['persona'] ?? 'Expert';
-    final assessment = persona['assessment'] ?? '';
-    final riskVote = (persona['risk_vote'] ?? 0).toDouble();
-    final keyFactor = persona['key_factor'] ?? '';
-    final urgency = persona['urgency'] ?? 'MONITOR';
-
-    final icon = name.contains('Hydro') ? '🌊' : name.contains('Meteo') ? '🌡️' : '🏙️';
-    final urgencyColor = urgency == 'ACT_NOW' ? CiroTheme.red : urgency == 'PREPARE' ? CiroTheme.yellow : CiroTheme.green;
+  Widget _buildLogDetail() {
+    if (_selectedLog == null) return const SizedBox.shrink();
+    final steps = (_selectedLog!['steps'] as List?) ?? [];
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: CiroTheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: CiroTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(icon, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(name, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w700))),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: urgencyColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
-                child: Text(urgency, style: TextStyle(color: urgencyColor, fontSize: 9, fontWeight: FontWeight.w800)),
-              ),
-              const SizedBox(width: 8),
-              Text('${(riskVote * 100).toInt()}%', style: const TextStyle(color: CiroTheme.accent, fontSize: 14, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(assessment, style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 12, height: 1.5)),
-          if (keyFactor.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text('Key factor: $keyFactor', style: TextStyle(color: CiroTheme.accent.withOpacity(0.8), fontSize: 11, fontStyle: FontStyle.italic)),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConsensusCard(Map<String, dynamic> consensus) {
-    final verdict = consensus['verdict'] ?? '';
-    final urgency = consensus['urgency'] ?? '';
-    final rationale = consensus['rationale'] ?? '';
-    final unanimous = consensus['unanimous'] == true;
-
-    return Container(
-      margin: const EdgeInsets.only(top: 10),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: CiroTheme.accent.withOpacity(0.05),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: CiroTheme.accent.withOpacity(0.3)),
       ),
@@ -410,221 +584,85 @@ class _AgentsScreenState extends State<AgentsScreen> {
         children: [
           Row(
             children: [
-              const Text('⚖️', style: TextStyle(fontSize: 18)),
+              const Icon(Icons.receipt_long, color: CiroTheme.accent, size: 14),
               const SizedBox(width: 8),
-              const Expanded(child: Text('CONSENSUS', style: TextStyle(color: CiroTheme.accent, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1))),
-              if (unanimous) const Text('UNANIMOUS', style: TextStyle(color: CiroTheme.green, fontSize: 9, fontWeight: FontWeight.w700)),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(verdict, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w600, height: 1.4)),
-          const SizedBox(height: 8),
-          Text(rationale, style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 12, height: 1.5)),
-        ],
-      ),
-    );
-  }
-
-  // ─── Response Section ────────────────────────────────────────────
-
-  Widget _buildResponseSection() {
-    final actions = (_responsePlan?['actions'] as List?) ?? [];
-    final simulation = _responsePlan?['simulation'] as Map<String, dynamic>? ?? {};
-    final narrative = _responsePlan?['narrative'] ?? '';
-    final reasoning = (_responsePlan?['reasoning_trace'] as List?) ?? [];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionTitle('RESPONSE PLAN', Icons.shield),
-        const SizedBox(height: 10),
-
-        // Narrative
-        if (narrative.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.all(14),
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: CiroTheme.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: CiroTheme.border),
-            ),
-            child: Text(narrative, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 13, height: 1.6)),
-          ),
-
-        // Reasoning trace
-        if (reasoning.isNotEmpty) ...[
-          _sectionTitle('REASONING TRACE', Icons.route),
-          const SizedBox(height: 8),
-          ...reasoning.map((step) => _buildReasoningStep(step)),
-          const SizedBox(height: 12),
-        ],
-
-        // Actions
-        _sectionTitle('PLANNED ACTIONS (${actions.length})', Icons.checklist),
-        const SizedBox(height: 8),
-        ...actions.map((a) => _buildActionCard(a)),
-
-        // Simulation before/after
-        if (simulation.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _sectionTitle('SIMULATION: BEFORE vs AFTER', Icons.compare_arrows),
-          const SizedBox(height: 8),
-          _buildSimulation(simulation),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildReasoningStep(Map<String, dynamic> step) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: CiroTheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: CiroTheme.border.withOpacity(0.5)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 22, height: 22,
-            decoration: BoxDecoration(color: CiroTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(6)),
-            child: Center(child: Text('${step['step'] ?? ''}', style: const TextStyle(color: CiroTheme.accent, fontSize: 10, fontWeight: FontWeight.w800))),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(step['thought'] ?? '', style: const TextStyle(color: CiroTheme.textSecondary, fontSize: 11)),
-                const SizedBox(height: 2),
-                Text('→ ${step['decision'] ?? ''}', style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 11, fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionCard(Map<String, dynamic> action) {
-    final category = action['category'] ?? '';
-    final desc = action['description'] ?? '';
-    final priority = action['priority'] ?? '';
-    final agency = action['responsible_agency'] ?? '';
-    final time = action['estimated_time_hours'] ?? 0;
-
-    final categoryIcon = {
-      'EVACUATE': '🚨', 'ALERT': '📢', 'DEPLOY': '🚁',
-      'REROUTE': '🛣️', 'SHELTER': '🏕️', 'MEDICAL': '🏥',
-    }[category] ?? '📋';
-
-    final priorityColor = priority == 'IMMEDIATE' ? CiroTheme.red : priority == 'WITHIN_6H' ? CiroTheme.yellow : CiroTheme.green;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: CiroTheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: CiroTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(categoryIcon, style: const TextStyle(fontSize: 16)),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: priorityColor.withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
-                child: Text(priority, style: TextStyle(color: priorityColor, fontSize: 8, fontWeight: FontWeight.w800)),
-              ),
+              Text('Trace: ${_selectedLog!['run_id']}', style: const TextStyle(color: CiroTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
               const Spacer(),
-              Text('${time}h', style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontFamily: 'monospace')),
+              GestureDetector(
+                onTap: () => setState(() => _selectedLog = null),
+                child: const Icon(Icons.close, color: CiroTheme.textMuted, size: 16),
+              ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(desc, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 12, height: 1.4)),
-          const SizedBox(height: 4),
-          Text(agency, style: TextStyle(color: CiroTheme.blue.withOpacity(0.8), fontSize: 10)),
+          const SizedBox(height: 12),
+          ...steps.take(20).map<Widget>((step) {
+            final status = step['status'] ?? 'ok';
+            final statusColor = status == 'error' ? CiroTheme.red : status == 'skip' ? CiroTheme.yellow : CiroTheme.green;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 6, height: 6, margin: const EdgeInsets.only(top: 5),
+                    decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(3)),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(step['action'] ?? '', style: TextStyle(color: CiroTheme.textPrimary, fontSize: 10, fontWeight: FontWeight.w600, fontFamily: 'monospace')),
+                        Text(step['detail'] ?? '', style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10, height: 1.3)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          if (steps.length > 20)
+            Text('+${steps.length - 20} more steps', style: TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
         ],
       ),
     );
   }
 
-  Widget _buildSimulation(Map<String, dynamic> sim) {
-    final before = sim['before'] as Map<String, dynamic>? ?? {};
-    final after = sim['after'] as Map<String, dynamic>? ?? {};
-    final effectiveness = (sim['effectiveness_score'] ?? 0).toDouble();
+  // ─── Helpers ───────────────────────────────────────────────────
 
+  Widget _buildSectionHeader(String title) {
+    return Text(title, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8));
+  }
+
+  Widget _buildLoadingState(String message) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         color: CiroTheme.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: CiroTheme.green.withOpacity(0.3)),
+        border: Border.all(color: CiroTheme.border),
       ),
       child: Column(
         children: [
-          // Effectiveness score
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('Effectiveness: ', style: TextStyle(color: CiroTheme.textMuted, fontSize: 11)),
-              Text('${(effectiveness * 100).toInt()}%', style: const TextStyle(color: CiroTheme.green, fontSize: 20, fontWeight: FontWeight.w800, fontFamily: 'monospace')),
-            ],
-          ),
-          const SizedBox(height: 14),
-          // Before/After grid
-          Row(
-            children: [
-              Expanded(child: _simColumn('BEFORE', before, CiroTheme.red)),
-              Container(width: 1, height: 100, color: CiroTheme.border),
-              Expanded(child: _simColumn('AFTER', after, CiroTheme.green)),
-            ],
-          ),
+          const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: CiroTheme.accent)),
+          const SizedBox(height: 12),
+          Text(message, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 11), textAlign: TextAlign.center),
         ],
       ),
     );
   }
 
-  Widget _simColumn(String title, Map<String, dynamic> data, Color color) {
-    return Column(
-      children: [
-        Text(title, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1)),
-        const SizedBox(height: 8),
-        _simStat('Evacuated', '${data['population_evacuated'] ?? 0}'),
-        _simStat('Shelters', '${data['shelters_activated'] ?? 0}'),
-        _simStat('Medical', '${data['medical_units_deployed'] ?? 0}'),
-        _simStat('Lives Saved', '${data['estimated_lives_saved'] ?? 0}'),
-      ],
-    );
-  }
-
-  Widget _simStat(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('$label: ', style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10)),
-          Text(value, style: const TextStyle(color: CiroTheme.textPrimary, fontSize: 11, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
-        ],
+  Widget _urgencyBadge(String urgency, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withOpacity(0.3)),
       ),
-    );
-  }
-
-  Widget _sectionTitle(String title, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: CiroTheme.accent),
-        const SizedBox(width: 8),
-        Text(title, style: const TextStyle(color: CiroTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1)),
-      ],
+      child: Text(urgency, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w700)),
     );
   }
 }

@@ -8,6 +8,8 @@ class ApiService {
 
   late final Dio _dio;
 
+  Dio get dio => _dio;
+
   ApiService._internal() {
     _dio = Dio(BaseOptions(
       baseUrl: ApiConfig.baseUrl,
