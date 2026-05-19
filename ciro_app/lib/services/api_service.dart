@@ -75,4 +75,63 @@ class ApiService {
       return false;
     }
   }
+
+  /// Run AI debate for a zone (3 personas argue about crisis)
+  Future<Map<String, dynamic>?> runDebate(String zoneId) async {
+    try {
+      final response = await _dio.post('/api/v1/debater/debate/$zoneId',
+        options: Options(receiveTimeout: const Duration(seconds: 90)),
+      );
+      if (response.statusCode == 200) return response.data;
+    } catch (e) {
+      print('Debate error: $e');
+    }
+    return null;
+  }
+
+  /// Get full Agent 4 response plan (debate → plan → simulate)
+  Future<Map<String, dynamic>?> getResponsePlan(String zoneId) async {
+    try {
+      final response = await _dio.post('/api/v1/agent4/respond/$zoneId',
+        options: Options(receiveTimeout: const Duration(seconds: 120)),
+      );
+      if (response.statusCode == 200) return response.data;
+    } catch (e) {
+      print('Response plan error: $e');
+    }
+    return null;
+  }
+
+  /// Get reasoning trace for judges
+  Future<Map<String, dynamic>?> getTrace(String zoneId) async {
+    try {
+      final response = await _dio.get('/api/v1/agent4/trace/$zoneId');
+      if (response.statusCode == 200) return response.data;
+    } catch (e) {
+      print('Trace error: $e');
+    }
+    return null;
+  }
+
+  /// Run full orchestrator cycle (evaluate all zones → debate high-risk → queue for Agent 4)
+  Future<Map<String, dynamic>?> runOrchestrator() async {
+    try {
+      final response = await _dio.post('/api/v1/orchestrator/run',
+        options: Options(receiveTimeout: const Duration(seconds: 180)),
+      );
+      if (response.statusCode == 200) return response.data;
+    } catch (e) {
+      print('Orchestrator error: $e');
+    }
+    return null;
+  }
+
+  /// Get orchestrator status (last run info)
+  Future<Map<String, dynamic>?> getOrchestratorStatus() async {
+    try {
+      final response = await _dio.get('/api/v1/orchestrator/status');
+      if (response.statusCode == 200) return response.data;
+    } catch (e) { print('Orchestrator status error: $e'); }
+    return null;
+  }
 }

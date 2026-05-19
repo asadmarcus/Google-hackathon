@@ -33,6 +33,7 @@ from typing import Optional
 from agents.agent_data_collector import router as data_collector_router
 from agents.agent_predictor import router as predictor_router
 from agents.agent_imagery import router as imagery_router
+from agents.agent_response import router as response_router
 from agents.agent_debater import router as debater_router
 from agents.agent_orchestrator import router as orchestrator_router, orchestrator
 from services.earth_engine_service import get_earth_engine_service
@@ -172,6 +173,11 @@ app.include_router(
     prefix="/api/v1/orchestrator",
     tags=["Orchestrator — AI Pipeline Coordinator"],
 )
+app.include_router(
+    response_router,
+    prefix="/api/v1/agent4",
+    tags=["Agent 4 — Response Commander"],
+)
 
 
 # ─── Root Endpoints ────────────────────────────────────────────────────────
@@ -188,7 +194,7 @@ async def api_root():
             "agent_3_ml": {"name": "ML Predictor (XGBoost)", "status": "active"},
             "debater": {"name": "LLM Multi-Persona Debate (Gemini)", "status": "active"},
             "orchestrator": {"name": "AI Pipeline Coordinator", "status": "active"},
-            "agent_4": {"name": "Response Dispatcher", "status": "planned"},
+            "agent_4": {"name": "Response Commander", "status": "active"},
         },
         "websocket": "ws://host/ws/signals",
         "docs": "/docs",

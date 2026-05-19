@@ -4,6 +4,7 @@ import 'theme/ciro_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/live_map_screen.dart';
+import 'screens/agents_screen.dart';
 import 'screens/prediction_screen.dart';
 import 'services/websocket_service.dart';
 import 'services/notification_service.dart';
@@ -46,6 +47,7 @@ class _AppShellState extends State<AppShell> {
   final List<Widget> _screens = const [
     HomeScreen(),
     AlertsScreen(),
+    AgentsScreen(),
     LiveMapScreen(),
   ];
 
@@ -116,6 +118,10 @@ class _AppShellState extends State<AppShell> {
             BottomNavigationBarItem(
               icon: Icon(Icons.notifications_rounded),
               label: 'Alerts',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.psychology_rounded),
+              label: 'AI Agents',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.map_rounded),
