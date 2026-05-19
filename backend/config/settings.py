@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Google Gemini (GeoGemma) API
     GOOGLE_API_KEY: str = ""  # Gemini API key for satellite image analysis
 
+    # Google Flood Hub API
+    GOOGLE_FLOODHUB_API_KEY: str = ""  # Apply: https://developers.google.com/flood-forecasting
+
     # Google Earth Engine
     GEE_PROJECT_ID: str = ""  # GEE project ID
     GEE_SERVICE_ACCOUNT: str = ""  # Service account email
