@@ -210,7 +210,7 @@ async def dashboard():
 @app.get("/map", include_in_schema=False)
 async def crisis_map():
     """Serve the interactive crisis map visualization."""
-    return FileResponse("static/crisis_map.html")
+    return FileResponse("backend/static/crisis_map.html")
 
 
 @app.get("/health", tags=["System"])
