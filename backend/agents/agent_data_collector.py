@@ -261,6 +261,9 @@ async def get_model_features(zone_id: str):
     
     features = _compute_ml_features(signals, zone)
     
+    # Inject Agent 1 satellite data (async call, can't be inside sync helper)
+    features["ndwi_delta"] = await _get_ndwi_delta(zone_id)
+    
     return {
         "zone_id": zone_id,
         "zone_name": zone["name"],
@@ -317,7 +320,30 @@ async def list_zones():
     return {"zones": zone_summaries, "total": len(zone_summaries)}
 
 
-# ─── Internal Helpers ──────────────────────────────────────────────────────────
+
+
+async def _get_ndwi_delta(zone_id: str) -> float:
+    """
+    Get the latest ndwi_delta from Agent 1's satellite signals.
+    Returns 0.0 if no satellite analysis has been run yet.
+    
+    This is the key integration point: Agent 1 (satellite) → Agent 2 (features) → Agent 3 (prediction)
+    """
+    try:
+        # Get recent signals from the store, filter to satellite source
+        signals = await signal_store.get_signals(zone_id, hours=168)  # 7 days
+        satellite_signals = [
+            s for s in signals
+            if s.get("source") == "satellite_agent1" and s.get("signal_type") == "satellite_ndwi"
+        ]
+        if satellite_signals:
+            # Return the most recent ndwi_delta value
+            latest = max(satellite_signals, key=lambda s: s.get("timestamp", ""))
+            return latest.get("value", 0.0)
+    except Exception as e:
+        logger.warning(f"Could not fetch Agent 1 ndwi_delta for {zone_id}: {e}")
+    return 0.0
+
 
 def _compute_risk_indicators(signals: List[Dict], zone: Dict) -> Dict:
     """Compute risk indicators from current signals."""
@@ -482,7 +508,7 @@ def _compute_ml_features(signals: List[Dict], zone: Dict) -> Dict:
         "month_cos": round(math.cos(2 * math.pi * now.month / 12), 4),
         
         # Placeholder for Agent 1 (imagery)
-        "ndwi_delta": 0.0,  # Will be filled by Agent 1 when ready
+        "ndwi_delta": 0.0,  # Replaced at call site with Agent 1 data
     }
 
 

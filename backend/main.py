@@ -32,6 +32,8 @@ from typing import Optional
 
 from agents.agent_data_collector import router as data_collector_router
 from agents.agent_predictor import router as predictor_router
+from agents.agent_imagery import router as imagery_router
+from services.earth_engine_service import get_earth_engine_service
 from services.signal_store import SignalStore
 from services.scheduler import CIROScheduler
 from services.websocket_manager import ws_manager
@@ -77,6 +79,10 @@ async def lifespan(app: FastAPI):
 
     # 1. Initialize database
     await signal_store.initialize()
+
+    # 2. Initialize Earth Engine (Agent 1)
+    ee_service = get_earth_engine_service()
+    await ee_service.initialize()
 
     # 2. Start scheduler
     from agents.agent_data_collector import run_fetch_cycle
@@ -146,9 +152,14 @@ app.include_router(
     prefix="/api/v1/agent3",
     tags=["Agent 3 — ML Predictor"],
 )
+app.include_router(
+    imagery_router,
+    prefix="/api/v1/agent1",
+    tags=["Agent 1 — Imagery & Geospatial"],
+)
 
 
-# ─── Root Endpoints ────────────────────────────────────────────────────────────
+# ─── Root Endpoints ────────────────────────────────────────────────────────
 @app.get("/api", tags=["System"])
 async def api_root():
     """API status overview (JSON)."""
@@ -157,7 +168,7 @@ async def api_root():
         "version": "2.0.0",
         "status": "online",
         "agents": {
-            "agent_1": {"name": "Imagery & Geospatial", "status": "planned"},
+            "agent_1": {"name": "Imagery & Geospatial", "status": "active"},
             "agent_2": {"name": "Data & API Collector", "status": "active"},
             "agent_3": {"name": "Predictive Model (ML)", "status": "active"},
             "agent_4": {"name": "Response Orchestrator", "status": "planned"},
@@ -171,6 +182,12 @@ async def api_root():
 async def dashboard():
     """Serve the Agent 2 Control Panel dashboard."""
     return FileResponse("static/index.html")
+
+
+@app.get("/map", include_in_schema=False)
+async def crisis_map():
+    """Serve the interactive crisis map visualization."""
+    return FileResponse("static/crisis_map.html")
 
 
 @app.get("/health", tags=["System"])

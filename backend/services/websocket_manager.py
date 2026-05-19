@@ -74,7 +74,7 @@ class WebSocketManager:
     """
 
     def __init__(self):
-        self._clients: Set[ClientSubscription] = set()
+        self._clients: List[ClientSubscription] = []
         self._lock = asyncio.Lock()
         
         # Metrics
@@ -118,7 +118,7 @@ class WebSocketManager:
         )
         
         async with self._lock:
-            self._clients.add(client)
+            self._clients.append(client)
         
         self.total_connections += 1
         
@@ -144,7 +144,8 @@ class WebSocketManager:
     async def disconnect(self, client: ClientSubscription) -> None:
         """Remove a client from the active connections."""
         async with self._lock:
-            self._clients.discard(client)
+            if client in self._clients:
+                self._clients.remove(client)
         
         logger.info(f"🔌 WebSocket disconnected (remaining: {self.active_connections})")
 
@@ -167,7 +168,7 @@ class WebSocketManager:
         disconnected = set()
         
         async with self._lock:
-            clients = set(self._clients)  # Copy to avoid modification during iteration
+            clients = list(self._clients)  # Copy to avoid modification during iteration
         
         for client in clients:
             # Filter signals for this client
@@ -192,7 +193,9 @@ class WebSocketManager:
         # Clean up disconnected clients
         if disconnected:
             async with self._lock:
-                self._clients -= disconnected
+                for c in disconnected:
+                    if c in self._clients:
+                        self._clients.remove(c)
         
         self.total_messages_sent += messages_sent
         return messages_sent
@@ -208,7 +211,7 @@ class WebSocketManager:
         disconnected = set()
         
         async with self._lock:
-            clients = set(self._clients)
+            clients = list(self._clients)
         
         for client in clients:
             try:
@@ -222,7 +225,9 @@ class WebSocketManager:
         
         if disconnected:
             async with self._lock:
-                self._clients -= disconnected
+                for c in disconnected:
+                    if c in self._clients:
+                        self._clients.remove(c)
 
     def _filter_for_client(self, signals: List[Dict], client: ClientSubscription) -> List[Dict]:
         """Apply client's subscription filters to a signal batch."""

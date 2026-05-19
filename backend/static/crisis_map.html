@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CIRO — Crisis Intelligence Platform</title>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDnlFt1G1BQKoZ8PzSIi-th5teJu8JdEYM&libraries=visualization"></script>
+<script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+<script src="https://unpkg.com/@deck.gl/google-maps@latest/dist.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#080c12;overflow:hidden}
+#map{width:100vw;height:100vh}
+
+/* Top bar */
+.top-bar{position:fixed;top:14px;left:14px;right:14px;display:flex;align-items:center;gap:10px;z-index:100;pointer-events:none}
+.top-bar>*{pointer-events:auto}
+.brand{background:rgba(8,12,18,0.92);padding:10px 20px;border-radius:30px;display:flex;align-items:center;gap:10px;backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06)}
+.brand h1{color:#f97316;font-size:17px;font-weight:800}
+.brand .sep{color:#2a2a2a;margin:0 4px}
+.brand span{color:#6b7280;font-size:12px}
+.live{display:flex;align-items:center;gap:5px}
+.live .dot{width:7px;height:7px;background:#22c55e;border-radius:50%;animation:pulse 2s infinite}
+.live span{color:#22c55e;font-size:10px;font-weight:700}
+.controls{background:rgba(8,12,18,0.92);padding:5px;border-radius:10px;display:flex;gap:3px;backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06)}
+.btn{background:none;border:none;color:#6b7280;padding:8px 13px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600;transition:all .15s}
+.btn:hover{color:#fff;background:rgba(255,255,255,0.05)}
+.btn.active{color:#f97316;background:rgba(249,115,22,0.1)}
+.btn.play-btn.playing{color:#ef4444;background:rgba(239,68,68,0.1)}
+
+/* Timeline */
+.timeline{position:fixed;top:70px;left:50%;transform:translateX(-50%);background:rgba(8,12,18,0.94);padding:10px 22px;border-radius:12px;display:flex;align-items:center;gap:14px;z-index:100;backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06)}
+.timeline label{color:#6b7280;font-size:9px;font-weight:700;letter-spacing:.8px}
+.timeline input[type=range]{width:280px;accent-color:#f97316}
+.timeline .day{text-align:right}
+.timeline .day-num{color:#f97316;font-size:18px;font-weight:800;line-height:1}
+.timeline .day-date{color:#6b7280;font-size:10px}
+
+/* Side panel */
+.side-panel{position:fixed;top:0;right:-400px;width:380px;height:100vh;background:rgba(8,12,18,0.97);backdrop-filter:blur(20px);border-left:1px solid rgba(255,255,255,0.06);z-index:200;transition:right .3s ease;overflow-y:auto;padding:24px}
+.side-panel.open{right:0}
+.side-panel .close-btn{position:absolute;top:14px;right:14px;background:none;border:none;color:#6b7280;font-size:18px;cursor:pointer}
+.sp-header{margin-bottom:20px}
+.sp-header h2{color:#e5e7eb;font-size:18px;font-weight:700}
+.sp-header .sp-sub{color:#6b7280;font-size:12px;margin-top:2px}
+.sp-alert{display:inline-block;padding:3px 10px;border-radius:5px;font-size:10px;font-weight:800;margin-top:6px}
+.sp-section{margin-bottom:18px}
+.sp-section h4{color:#6b7280;font-size:9px;font-weight:700;letter-spacing:.8px;margin-bottom:8px}
+.sp-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.sp-stat{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center}
+.sp-stat .val{font-size:18px;font-weight:800;font-family:'SF Mono',monospace}
+.sp-stat .lbl{color:#6b7280;font-size:8px;font-weight:600;margin-top:2px;letter-spacing:.3px}
+.sp-desc{color:#9ca3af;font-size:12px;line-height:1.7;margin-top:8px}
+.sp-desc b{color:#e5e7eb}
+.sp-mini-chart{display:flex;align-items:flex-end;gap:2px;height:50px;margin-top:8px}
+.sp-bar{flex:1;border-radius:2px 2px 0 0;min-width:0;transition:height .3s}
+
+/* Bottom cards */
+.bottom-bar{position:fixed;bottom:0;left:0;right:0;z-index:100;pointer-events:none}
+.bottom-gradient{background:linear-gradient(transparent,rgba(8,12,18,0.95) 40%);padding:40px 14px 14px}
+.bottom-gradient>*{pointer-events:auto}
+.cards-row{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px}
+.cards-row::-webkit-scrollbar{display:none}
+.card{min-width:175px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:12px;cursor:pointer;transition:all .2s;flex-shrink:0;position:relative;overflow:hidden}
+.card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.card.crit::after{background:#ef4444}
+.card.high::after{background:#f97316}
+.card.mod::after{background:#eab308}
+.card.low::after{background:#22c55e}
+.card:hover{border-color:rgba(249,115,22,0.3);transform:translateY(-2px)}
+.card.selected{border-color:rgba(249,115,22,0.5);background:rgba(249,115,22,0.05)}
+.card .c-name{color:#e5e7eb;font-size:12px;font-weight:700}
+.card .c-prov{color:#4b5563;font-size:9px;margin-bottom:6px}
+.card .c-risks{display:flex;gap:10px}
+.card .c-risk{font-size:11px;font-weight:800;font-family:'SF Mono',monospace}
+.card .c-info{color:#6b7280;font-size:9px;margin-top:5px}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="top-bar">
+  <div class="brand">
+    <h1>CIRO</h1><span class="sep">|</span><span>Crisis Intelligence Platform</span>
+    <div class="live"><div class="dot"></div><span>LIVE</span></div>
+  </div>
+  <div class="controls">
+    <button class="btn active" id="b-flood" onclick="toggle('flood')">🌊 Flood</button>
+    <button class="btn active" id="b-heat" onclick="toggle('heat')">🔥 Heat</button>
+    <button class="btn active" id="b-river" onclick="toggle('rivers')">〰️ Rivers</button>
+    <button class="btn play-btn" id="b-play" onclick="togglePlay()">▶ Play</button>
+    <button class="btn" onclick="refresh()">↻</button>
+  </div>
+</div>
+
+<div class="timeline">
+  <label>FORECAST</label>
+  <input type="range" id="slider" min="1" max="30" value="1" oninput="setDay(+this.value)">
+  <div class="day"><div class="day-num" id="d-num">Day 1</div><div class="day-date" id="d-date"></div></div>
+</div>
+
+<div class="side-panel" id="panel">
+  <button class="close-btn" onclick="closePanel()">✕</button>
+  <div id="panel-content"></div>
+</div>
+
+<div class="bottom-bar"><div class="bottom-gradient"><div class="cards-row" id="cards"></div></div></div>
+
+<script>
+const API=location.origin+'/api/v1';
+const Z=[
+  {id:'islamabad-g10',name:'G-10, Islamabad',lat:33.6844,lng:73.0479,prov:'Federal',elev:507,drain:0.6},
+  {id:'lahore-city',name:'Lahore City',lat:31.5204,lng:74.3587,prov:'Punjab',elev:217,drain:0.4},
+  {id:'karachi-south',name:'Karachi South',lat:24.8607,lng:67.0011,prov:'Sindh',elev:10,drain:0.3},
+  {id:'peshawar-city',name:'Peshawar City',lat:34.0151,lng:71.5249,prov:'KPK',elev:331,drain:0.5},
+  {id:'multan-city',name:'Multan City',lat:30.1575,lng:71.5249,prov:'Punjab',elev:122,drain:0.35},
+  {id:'jacobabad-city',name:'Jacobabad City',lat:28.281,lng:68.4376,prov:'Sindh',elev:55,drain:0.25},
+  {id:'sukkur-city',name:'Sukkur City',lat:27.7052,lng:68.8574,prov:'Sindh',elev:66,drain:0.3},
+  {id:'quetta-city',name:'Quetta City',lat:30.1798,lng:66.975,prov:'Balochistan',elev:1680,drain:0.35},
+];
+
+// Rivers — dense coordinates following actual geography
+const RIVERS={
+indus:[[35.9,74.8],[35.6,74.4],[35.3,74.0],[35.0,73.6],[34.7,73.1],[34.4,72.7],[34.1,72.3],[33.8,72.0],[33.5,71.7],[33.2,71.5],[32.9,71.3],[32.6,71.1],[32.3,70.9],[32.0,70.7],[31.7,70.6],[31.4,70.5],[31.1,70.4],[30.8,70.3],[30.5,70.2],[30.2,70.1],[29.9,69.9],[29.6,69.7],[29.3,69.5],[29.0,69.2],[28.7,69.0],[28.4,68.7],[28.1,68.5],[27.8,68.4],[27.5,68.3],[27.2,68.1],[26.9,67.9],[26.6,67.7],[26.3,67.5],[26.0,67.3],[25.7,67.1],[25.4,67.0],[25.1,66.9],[24.8,67.0]],
+chenab:[[33.5,75.2],[33.2,74.9],[32.9,74.6],[32.6,74.3],[32.3,74.0],[32.0,73.7],[31.7,73.4],[31.4,73.1],[31.1,72.8],[30.8,72.4],[30.5,72.0],[30.2,71.5],[29.9,71.2],[29.6,70.9]],
+jhelum:[[34.4,74.8],[34.1,74.5],[33.8,74.2],[33.5,73.9],[33.2,73.6],[32.9,73.4],[32.6,73.2],[32.3,73.1],[32.0,72.8],[31.7,72.5],[31.4,72.2],[31.1,72.0],[30.8,71.7]],
+kabul:[[34.8,69.5],[34.6,69.9],[34.5,70.2],[34.3,70.5],[34.2,70.8],[34.1,71.1],[34.0,71.3],[34.0,71.5],[33.9,71.8],[33.8,72.0]],
+ravi:[[32.7,75.3],[32.4,75.0],[32.1,74.7],[31.8,74.5],[31.5,74.3],[31.2,74.0],[30.9,73.7],[30.6,73.3],[30.3,72.9],[30.0,72.5]],
+};
+
+let map,deckOverlay,preds={},day=1,layers={flood:true,heat:true,rivers:true},playing=false,playTimer=null,selectedZone=null;
+
+// Google Maps dark style — terrain visible, water visible
+const STYLE=[
+{elementType:'geometry',stylers:[{color:'#0d1117'}]},
+{elementType:'labels.text.fill',stylers:[{color:'#4a8aba'}]},
+{elementType:'labels.text.stroke',stylers:[{color:'#0d1117'},{weight:3}]},
+{featureType:'water',elementType:'geometry',stylers:[{color:'#0a1929'}]},
+{featureType:'water',elementType:'labels.text.fill',stylers:[{color:'#1e5a8a'}]},
+{featureType:'landscape',elementType:'geometry',stylers:[{color:'#0d1117'}]},
+{featureType:'landscape.natural.terrain',elementType:'geometry',stylers:[{color:'#111922'}]},
+{featureType:'administrative',elementType:'geometry.stroke',stylers:[{color:'#1e3a5f'},{weight:1}]},
+{featureType:'administrative.country',elementType:'labels.text.fill',stylers:[{color:'#3a7aaa'}]},
+{featureType:'administrative.province',elementType:'labels.text.fill',stylers:[{color:'#2a5a8a'}]},
+{featureType:'administrative.locality',elementType:'labels.text.fill',stylers:[{color:'#5a9aca'}]},
+{featureType:'road.highway',elementType:'geometry',stylers:[{color:'#15202b'},{weight:0.5}]},
+{featureType:'road.arterial',stylers:[{visibility:'off'}]},
+{featureType:'road.local',stylers:[{visibility:'off'}]},
+{featureType:'poi',stylers:[{visibility:'off'}]},
+{featureType:'transit',stylers:[{visibility:'off'}]},
+];
+
+function initMap(){
+  map=new google.maps.Map(document.getElementById('map'),{
+    center:{lat:29.5,lng:70},zoom:6,styles:STYLE,
+    disableDefaultUI:true,zoomControl:true,
+    zoomControlOptions:{position:google.maps.ControlPosition.LEFT_CENTER},
+    restriction:{latLngBounds:{north:38,south:22,west:62,east:78}},
+    minZoom:5,maxZoom:11,
+  });
+  drawRivers();
+  addCityMarkers();
+  loadData();
+  setDate();
+}
+
+function drawRivers(){
+  Object.entries(RIVERS).forEach(([name,coords])=>{
+    const path=coords.map(c=>({lat:c[0],lng:c[1]}));
+    const poly=new google.maps.Polyline({
+      path,map,geodesic:true,
+      strokeColor:'#06b6d4',strokeOpacity:0.7,
+      strokeWeight:name==='indus'?3.5:2.5,
+    });
+    poly._river=name;
+    if(!window._riverLines)window._riverLines=[];
+    window._riverLines.push(poly);
+  });
+}
+
+function addCityMarkers(){
+  Z.forEach(z=>{
+    const marker=new google.maps.Marker({
+      position:{lat:z.lat,lng:z.lng},map,
+      icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#22c55e',fillOpacity:0.9,strokeColor:'#fff',strokeWeight:1.5},
+      title:z.name,
+    });
+    z._marker=marker;
+  });
+}
+
+async function loadData(){
+  await Promise.all(Z.map(async z=>{
+    try{const r=await fetch(`${API}/agent3/predict/${z.id}`,{method:'POST'});if(r.ok)preds[z.id]=await r.json();}catch(e){}
+  }));
+  updateViz();
+  renderCards();
+}
+
+// IDW interpolation for smooth heatmap
+function buildHeatPoints(){
+  const fPts=[],hPts=[];
+  Z.forEach(z=>{
+    const pred=preds[z.id];if(!pred||!pred.predictions[day-1])return;
+    const d=pred.predictions[day-1];
+    const flood=d.flood_risk;
+    const heat=d.heatstroke_risk;
+    const pos=new google.maps.LatLng(z.lat,z.lng);
+
+    // City center — strongest
+    if(flood>0.01) fPts.push({location:pos,weight:flood*6});
+    if(heat>0.01) hPts.push({location:pos,weight:heat*6});
+
+    // Radiate outward in rings — natural falloff, not a grid
+    const rings=[
+      {dist:0.08,decay:0.85,n:6},
+      {dist:0.18,decay:0.6,n:10},
+      {dist:0.32,decay:0.35,n:14},
+      {dist:0.5,decay:0.18,n:12},
+      {dist:0.75,decay:0.08,n:10},
+    ];
+    rings.forEach(ring=>{
+      for(let i=0;i<ring.n;i++){
+        const angle=(i/ring.n)*Math.PI*2+Math.random()*0.4;
+        const r=ring.dist*(0.7+Math.random()*0.6);
+        const lat2=z.lat+Math.sin(angle)*r;
+        const lng2=z.lng+Math.cos(angle)*r*1.15;
+        if(flood>0.01) fPts.push({location:new google.maps.LatLng(lat2,lng2),weight:flood*6*ring.decay});
+        if(heat>0.01) hPts.push({location:new google.maps.LatLng(lat2,lng2),weight:heat*6*ring.decay});
+      }
+    });
+  });
+  return {fPts,hPts};
+}
+
+function updateViz(){
+  if(!window._floodHeat){
+    window._floodHeat=new google.maps.visualization.HeatmapLayer({map:null,dissipating:true,opacity:0.65,maxIntensity:4,
+      gradient:['rgba(0,0,0,0)','rgba(14,57,138,0.2)','rgba(30,64,175,0.4)','rgba(59,130,246,0.6)','rgba(96,165,250,0.8)','rgba(191,219,254,0.95)']});
+    window._heatHeat=new google.maps.visualization.HeatmapLayer({map:null,dissipating:true,opacity:0.6,maxIntensity:4,
+      gradient:['rgba(0,0,0,0)','rgba(120,53,15,0.2)','rgba(180,83,9,0.4)','rgba(234,88,12,0.55)','rgba(249,115,22,0.7)','rgba(254,215,170,0.9)']});
+    // Set initial radius based on zoom
+    const z=map.getZoom()||6;
+    const r=Math.round(40+z*12);
+    window._floodHeat.set('radius',r);
+    window._heatHeat.set('radius',Math.round(r*0.9));
+  }
+
+  const {fPts,hPts}=buildHeatPoints();
+  window._floodHeat.setData(fPts);
+  window._heatHeat.setData(hPts);
+  window._floodHeat.setMap(layers.flood?map:null);
+  window._heatHeat.setMap(layers.heat?map:null);
+
+  // River colors based on flood risk
+  const avgF=Z.reduce((s,z)=>{const p=preds[z.id];return s+(p?.predictions[day-1]?.flood_risk||0);},0)/Z.length;
+  const rc=avgF>0.4?'#ef4444':avgF>0.2?'#f97316':'#06b6d4';
+  const rw=avgF>0.4?5:avgF>0.2?4:3;
+  (window._riverLines||[]).forEach(l=>{l.setOptions({strokeColor:rc,strokeWeight:l._river==='indus'?rw:rw-1,visible:layers.rivers})});
+
+  // City marker colors
+  Z.forEach(z=>{
+    const pred=preds[z.id];if(!pred||!pred.predictions[day-1]||!z._marker)return;
+    const d=pred.predictions[day-1];
+    const maxR=Math.max(d.flood_risk,d.heatstroke_risk);
+    const col=maxR>=0.6?'#ef4444':maxR>=0.35?'#f97316':maxR>=0.15?'#eab308':'#22c55e';
+    const scale=maxR>=0.5?12:maxR>=0.3?10:8;
+    z._marker.setIcon({path:google.maps.SymbolPath.CIRCLE,scale,fillColor:col,fillOpacity:0.9,strokeColor:'#fff',strokeWeight:1.5});
+  });
+
+  // Zoom-responsive radius
+  const zoom=map.getZoom()||6;
+  const radius=Math.round(40+zoom*12);
+  window._floodHeat.set('radius',radius);
+  window._heatHeat.set('radius',Math.round(radius*0.9));
+}
+
+// Handle zoom changes
+if(typeof google!=='undefined'){
+  const waitForMap=setInterval(()=>{
+    if(map){map.addListener('zoom_changed',()=>updateViz());clearInterval(waitForMap);}
+  },500);
+}
+
+function setDay(d){day=d;document.getElementById('slider').value=d;document.getElementById('d-num').textContent=`Day ${d}`;setDate();updateViz();renderCards();if(selectedZone)showPanel(selectedZone);}
+function setDate(){const dt=new Date();dt.setDate(dt.getDate()+day-1);document.getElementById('d-date').textContent=dt.toLocaleDateString('en-PK',{month:'short',day:'numeric',year:'numeric'});}
+
+function toggle(t){
+  layers[t]=!layers[t];
+  document.getElementById('b-'+t.replace('rivers','river')).classList.toggle('active');
+  updateViz();
+}
+
+function togglePlay(){
+  playing=!playing;
+  const btn=document.getElementById('b-play');
+  if(playing){btn.textContent='⏸ Pause';btn.classList.add('playing');playTimer=setInterval(()=>{day=day>=30?1:day+1;setDay(day);},800);}
+  else{btn.textContent='▶ Play';btn.classList.remove('playing');clearInterval(playTimer);}
+}
+
+function refresh(){preds={};loadData();}
+
+function renderCards(){
+  const sorted=[...Z].sort((a,b)=>{
+    const ma=Math.max(preds[a.id]?.predictions[day-1]?.flood_risk||0,preds[a.id]?.predictions[day-1]?.heatstroke_risk||0);
+    const mb=Math.max(preds[b.id]?.predictions[day-1]?.flood_risk||0,preds[b.id]?.predictions[day-1]?.heatstroke_risk||0);
+    return mb-ma;
+  });
+
+  document.getElementById('cards').innerHTML=sorted.map(z=>{
+    const p=preds[z.id];if(!p)return`<div class="card low"><div class="c-name">${z.name}</div><div class="c-prov">${z.prov}</div><div class="c-info">Loading...</div></div>`;
+    const d=p.predictions[day-1];const s=p.summary;
+    const f=d.flood_risk,h=d.heatstroke_risk,mx=Math.max(f,h);
+    const cls=mx>=0.6?'crit':mx>=0.35?'high':mx>=0.15?'mod':'low';
+    const sel=selectedZone===z.id?'selected':'';
+    return`<div class="card ${cls} ${sel}" onclick="selectZone('${z.id}')">
+      <div class="c-name">${z.name}</div><div class="c-prov">${z.prov}</div>
+      <div class="c-risks">
+        <span class="c-risk" style="color:#60a5fa">🌊${(f*100).toFixed(0)}%</span>
+        <span class="c-risk" style="color:#fb923c">🔥${(h*100).toFixed(0)}%</span>
+      </div>
+      <div class="c-info">${d.expected_temp_c.toFixed(0)}°C • ${d.expected_rain_mm.toFixed(0)}mm • ${d.dominant_factor}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectZone(id){
+  selectedZone=id;
+  const z=Z.find(x=>x.id===id);
+  map.panTo({lat:z.lat,lng:z.lng});map.setZoom(8);
+  showPanel(id);
+  renderCards();
+}
+
+function showPanel(id){
+  const z=Z.find(x=>x.id===id);const p=preds[id];if(!p)return;
+  const d=p.predictions[day-1];const s=p.summary;
+  const f=d.flood_risk,h=d.heatstroke_risk;
+  const alert=s.overall_alert_level;
+  const alertCol=alert==='CRITICAL'?'#ef4444':alert==='HIGH'?'#f97316':alert==='MODERATE'?'#eab308':'#22c55e';
+
+  // Build 30-day mini chart
+  let bars='';
+  p.predictions.forEach((pd,i)=>{
+    const fh=pd.flood_risk*50;const hh=pd.heatstroke_risk*50;
+    const isToday=i===day-1;
+    bars+=`<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;opacity:${isToday?1:0.6}">
+      <div class="sp-bar" style="height:${hh}px;background:#fb923c;${isToday?'outline:1px solid #f97316':''}"></div>
+      <div class="sp-bar" style="height:${fh}px;background:#60a5fa;${isToday?'outline:1px solid #3b82f6':''}"></div>
+    </div>`;
+  });
+
+  // Narrative
+  let narrative='';
+  if(f>h){
+    narrative=`<b>Flood risk is dominant</b> on Day ${day}. Expected ${d.expected_rain_mm.toFixed(0)}mm rainfall with ${d.expected_humidity.toFixed(0)}% humidity. `;
+    if(f>0.5)narrative+=`River discharge elevated — low-lying areas of ${z.name} at significant risk. Poor drainage (${(z.drain*100).toFixed(0)}%) amplifies flood impact. `;
+    narrative+=`Peak flood risk reaches <b>${(s.peak_flood_risk*100).toFixed(0)}%</b> on <b>Day ${s.peak_flood_day}</b>. ${s.high_flood_days} days in the 30-day window exceed high-risk threshold.`;
+  }else{
+    narrative=`<b>Heatstroke risk dominates</b> on Day ${day}. Temperature projected at ${d.expected_temp_c.toFixed(0)}°C. `;
+    if(h>0.5)narrative+=`Sustained extreme heat advisory for ${z.name}. Vulnerable populations (elderly, outdoor workers) at serious risk. `;
+    narrative+=`Peak heat risk reaches <b>${(s.peak_heat_risk*100).toFixed(0)}%</b> on <b>Day ${s.peak_heat_day}</b>. ${s.high_heat_days} extreme heat days forecasted.`;
+  }
+
+  document.getElementById('panel-content').innerHTML=`
+    <div class="sp-header">
+      <h2>${z.name}</h2>
+      <div class="sp-sub">${z.prov} • ${z.elev}m elevation • Drainage: ${(z.drain*100).toFixed(0)}%</div>
+      <div class="sp-alert" style="background:${alertCol}22;color:${alertCol}">${alert}</div>
+    </div>
+    <div class="sp-section">
+      <h4>DAY ${day} CONDITIONS</h4>
+      <div class="sp-grid">
+        <div class="sp-stat"><div class="val" style="color:#60a5fa">${(f*100).toFixed(0)}%</div><div class="lbl">FLOOD RISK</div></div>
+        <div class="sp-stat"><div class="val" style="color:#fb923c">${(h*100).toFixed(0)}%</div><div class="lbl">HEAT RISK</div></div>
+        <div class="sp-stat"><div class="val" style="color:#e5e7eb">${d.expected_temp_c.toFixed(1)}°</div><div class="lbl">TEMP (°C)</div></div>
+      </div>
+      <div class="sp-grid" style="margin-top:6px">
+        <div class="sp-stat"><div class="val" style="color:#60a5fa">${d.expected_rain_mm.toFixed(1)}</div><div class="lbl">RAIN (mm)</div></div>
+        <div class="sp-stat"><div class="val" style="color:#9ca3af">${d.expected_humidity.toFixed(0)}%</div><div class="lbl">HUMIDITY</div></div>
+        <div class="sp-stat"><div class="val" style="color:${alertCol}">${d.alert_level}</div><div class="lbl">ALERT</div></div>
+      </div>
+    </div>
+    <div class="sp-section">
+      <h4>30-DAY FORECAST</h4>
+      <div class="sp-mini-chart">${bars}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px">
+        <span style="color:#6b7280;font-size:9px">Day 1</span>
+        <span style="color:#6b7280;font-size:9px">Day 30</span>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:6px">
+        <span style="color:#60a5fa;font-size:10px">■ Flood</span>
+        <span style="color:#fb923c;font-size:10px">■ Heat</span>
+      </div>
+    </div>
+    <div class="sp-section">
+      <h4>PEAK RISK SUMMARY</h4>
+      <div class="sp-grid">
+        <div class="sp-stat"><div class="val" style="color:#60a5fa">${s.peak_flood_day}</div><div class="lbl">PEAK FLOOD DAY</div></div>
+        <div class="sp-stat"><div class="val" style="color:#fb923c">${s.peak_heat_day}</div><div class="lbl">PEAK HEAT DAY</div></div>
+        <div class="sp-stat"><div class="val" style="color:#ef4444">${s.high_flood_days+s.high_heat_days}</div><div class="lbl">DANGER DAYS</div></div>
+      </div>
+    </div>
+    <div class="sp-section">
+      <h4>ANALYSIS</h4>
+      <div class="sp-desc">${narrative}</div>
+    </div>
+    <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.05)">
+      <div style="color:#6b7280;font-size:9px;font-weight:600;letter-spacing:.5px">DATA SOURCE</div>
+      <div style="color:#9ca3af;font-size:11px;margin-top:4px">${d.data_source} • Confidence: ${d.confidence}</div>
+      <div style="color:#6b7280;font-size:10px;margin-top:2px">Model: CIRO v3.0 (XGBoost + EWMA + Sigmoid)</div>
+    </div>
+  `;
+  document.getElementById('panel').classList.add('open');
+}
+
+function closePanel(){document.getElementById('panel').classList.remove('open');selectedZone=null;renderCards();}
+
+window.onload=initMap;
+</script>
+</body>
+</html>

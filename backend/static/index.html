@@ -161,6 +161,30 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
   </div>
 </div>
 
+<!-- Agent 1 Satellite Analysis -->
+<div class="section" style="border-color:rgba(34,197,94,0.35)">
+  <div class="section-header">
+    <h3><i class="fa-solid fa-satellite" style="color:var(--green);margin-right:8px"></i>Agent 1 — Satellite & Geospatial <span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:8px">GeoGemma · Sentinel-2 · NDWI Change Detection</span></h3>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm btn-secondary" onclick="agent1Status()" id="btn-a1-status"><i class="fa-solid fa-circle-info"></i> Status</button>
+    </div>
+  </div>
+  <div class="section-body">
+    <div class="actions" style="margin-bottom:14px">
+      <button class="btn btn-primary" style="background:var(--green)" onclick="agent1AnalyzeZone()" id="btn-a1-analyze"><i class="fa-solid fa-satellite"></i> Analyze Zone</button>
+      <button class="btn btn-secondary" onclick="agent1AnalyzeAll()" id="btn-a1-all"><i class="fa-solid fa-globe"></i> Analyze All Zones</button>
+      <span style="font-size:12px;color:var(--text-muted);align-self:center">for <b id="a1-zone-name">G-10, Islamabad</b></span>
+    </div>
+    <div id="agent1-body">
+      <div class="empty-state" style="padding:24px">
+        <i class="fa-solid fa-satellite" style="color:var(--green);opacity:0.4"></i>
+        <div>Select a zone above, then click <b style="color:var(--green)">Analyze Zone</b>.</div>
+        <div style="font-size:11px;margin-top:6px">Uses Sentinel-2 imagery + GeoGemma AI to detect water body expansion.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Zones -->
 <div class="section">
   <div class="section-header">
@@ -226,6 +250,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); padd
 <script>
 const API2 = window.location.origin + '/api/v1/agent2';
 const API3 = window.location.origin + '/api/v1/agent3';
+const API1 = window.location.origin + '/api/v1/agent1';
 const zones = ['islamabad-g10', 'lahore-city', 'karachi-south', 'peshawar-city', 'multan-city', 'jacobabad-city', 'sukkur-city', 'quetta-city'];
 const zoneNames = {'islamabad-g10':'G-10, Islamabad','lahore-city':'Lahore City','karachi-south':'Karachi South','peshawar-city':'Peshawar City','multan-city':'Multan City','jacobabad-city':'Jacobabad City','sukkur-city':'Sukkur City','quetta-city':'Quetta City'};
 const zoneProvinces = {'islamabad-g10':'Federal','lahore-city':'Punjab','karachi-south':'Sindh','peshawar-city':'KPK','multan-city':'Punjab','jacobabad-city':'Sindh','sukkur-city':'Sindh','quetta-city':'Balochistan'};
@@ -273,6 +298,7 @@ function renderZones() {
 async function selectZone(z) {
   selectedZone = z;
   document.getElementById('pzone-name').textContent = zoneNames[z];
+  document.getElementById('a1-zone-name').textContent = zoneNames[z];
   renderZones();
   if (currentTab === 'signals') {
     log(`Loading signals for ${zoneNames[z]}...`);
@@ -611,6 +637,141 @@ async function retrainModel() {
   setTimeout(() => {
     btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Retrain';
   }, 3000);
+}
+
+// ─── Agent 1 ─────────────────────────────────────────────────────────────────
+
+async function agent1AnalyzeZone() {
+  const btn = document.getElementById('btn-a1-analyze');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing...';
+  const z = selectedZone;
+  log(`Agent 1: Satellite analysis for ${zoneNames[z]}...`, 'info');
+
+  try {
+    const res = await fetch(`${API1}/analyze/${z}`, {method:'POST'});
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || res.statusText); }
+    const data = await res.json();
+    renderSatelliteResult(data);
+    log(`Agent 1: ${zoneNames[z]} — NDWI Δ=${data.ndwi_delta.toFixed(4)}, AI severity=${data.ai_severity}, flood=${data.ai_flood_detected ? 'YES' : 'no'}`,
+      data.ai_flood_detected ? 'warn' : 'success');
+  } catch(e) {
+    log(`Agent 1 failed: ${e.message}`, 'error');
+    document.getElementById('agent1-body').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation" style="color:var(--red)"></i><div style="color:var(--red)">${e.message}</div></div>`;
+  }
+
+  btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-satellite"></i> Analyze Zone';
+}
+
+async function agent1AnalyzeAll() {
+  const btn = document.getElementById('btn-a1-all');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing all...';
+  log('Agent 1: Analyzing all 8 zones via satellite...', 'info');
+
+  try {
+    const res = await fetch(`${API1}/analyze-all`, {method:'POST'});
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || res.statusText); }
+    const data = await res.json();
+    renderSatelliteAllResults(data);
+    log(`Agent 1: ${data.zones_analyzed} zones analyzed, ${data.zones_with_flood_signal} with flood signal, highest severity: ${data.highest_severity} (${data.highest_severity_zone})`,
+      data.zones_with_flood_signal > 0 ? 'warn' : 'success');
+  } catch(e) {
+    log(`Agent 1 analyze-all failed: ${e.message}`, 'error');
+  }
+
+  btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-globe"></i> Analyze All Zones';
+}
+
+async function agent1Status() {
+  try {
+    const res = await fetch(`${API1}/status`);
+    const data = await res.json();
+    log(`Agent 1 status: GEE=${data.gee_authenticated ? '✅' : '❌ (simulation)'}, Gemini=${data.gemini_available ? '✅' : '❌'}`, data.gee_authenticated ? 'success' : 'warn');
+  } catch(e) { log(`Agent 1 status failed: ${e.message}`, 'error'); }
+}
+
+function renderSatelliteResult(data) {
+  const floodColor = data.ai_flood_detected ? 'var(--red)' : 'var(--green)';
+  const ndwiColor = data.ndwi_delta > 0.05 ? 'var(--blue)' : data.ndwi_delta < -0.05 ? 'var(--yellow)' : 'var(--text-muted)';
+  
+  let html = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary)">Satellite Analysis — <b style="color:var(--text)">${data.zone_name}</b></div>
+      <span class="alert-badge" style="background:${data.ai_flood_detected ? 'var(--red-dim)' : 'var(--green-dim)'};color:${floodColor}">${data.ai_flood_detected ? '⚠️ FLOOD DETECTED' : '✓ NO FLOOD'}</span>
+      <span style="font-size:11px;color:var(--text-muted)">${data.data_source} | ${data.satellite}</span>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="s-val" style="color:${ndwiColor}">${data.ndwi_delta >= 0 ? '+' : ''}${data.ndwi_delta.toFixed(4)}</div>
+        <div class="s-lbl">NDWI Delta<br>Water Change</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:${sevColor(data.ai_severity)}">${data.ai_severity}/10</div>
+        <div class="s-lbl">AI Severity<br>GeoGemma</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val">${(data.ai_confidence * 100).toFixed(0)}%</div>
+        <div class="s-lbl">Confidence<br>Assessment</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="color:var(--blue)">${data.ai_estimated_extent_km2.toFixed(1)}</div>
+        <div class="s-lbl">Flood Extent<br>km²</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-val" style="font-size:16px">${data.flood_signal_strength.toFixed(3)}</div>
+        <div class="s-lbl">Signal Strength<br>0–1 scale</div>
+      </div>
+    </div>`;
+
+  // AI Description
+  html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">GeoGemma AI Interpretation</div>
+    <div style="font-size:13px;color:var(--text);line-height:1.6">${data.ai_description || 'No description available'}</div>
+  </div>`;
+
+  // Risk Factors + Recommendations
+  if (data.ai_risk_factors && data.ai_risk_factors.length) {
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="font-size:11px;color:var(--red);margin-bottom:6px;font-weight:600">⚠ Risk Factors</div>
+        <ul style="font-size:12px;color:var(--text-secondary);padding-left:16px;margin:0">${data.ai_risk_factors.map(r => `<li style="margin-bottom:4px">${r}</li>`).join('')}</ul>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="font-size:11px;color:var(--green);margin-bottom:6px;font-weight:600">✓ Recommendations</div>
+        <ul style="font-size:12px;color:var(--text-secondary);padding-left:16px;margin:0">${(data.ai_recommendations || []).map(r => `<li style="margin-bottom:4px">${r}</li>`).join('')}</ul>
+      </div>
+    </div>`;
+  }
+
+  // GEE auth note
+  if (!data.gee_authenticated) {
+    html += `<div style="margin-top:12px;padding:8px 12px;background:var(--yellow-dim);border:1px solid rgba(234,179,8,0.3);border-radius:6px;font-size:11px;color:var(--yellow)"><i class="fa-solid fa-info-circle"></i> Running in simulation mode (GEE not authenticated). Data is realistic but not live satellite imagery.</div>`;
+  }
+
+  document.getElementById('agent1-body').innerHTML = html;
+}
+
+function renderSatelliteAllResults(data) {
+  if (!data.results || data.results.length === 0) {
+    document.getElementById('agent1-body').innerHTML = '<div class="empty-state">No results.</div>';
+    return;
+  }
+  let html = `<div style="margin-bottom:12px;font-size:12px;color:var(--text-secondary)"><b>${data.zones_analyzed}</b> zones analyzed | <b style="color:${data.zones_with_flood_signal ? 'var(--red)' : 'var(--green)'}">${data.zones_with_flood_signal}</b> with flood signal</div>`;
+  html += `<table class="signal-table"><thead><tr><th>Zone</th><th>NDWI Δ</th><th>Flood?</th><th>Severity</th><th>Confidence</th><th>Extent (km²)</th><th>Signal</th></tr></thead><tbody>`;
+  data.results.forEach(r => {
+    const fc = r.ai_flood_detected ? 'var(--red)' : 'var(--green)';
+    const ndwiC = r.ndwi_delta > 0.05 ? 'var(--blue)' : 'var(--text-muted)';
+    html += `<tr>
+      <td><b>${r.zone_name}</b><br><span style="font-size:10px;color:var(--text-muted)">${r.province}</span></td>
+      <td style="font-family:var(--mono);color:${ndwiC}">${r.ndwi_delta >= 0 ? '+' : ''}${r.ndwi_delta.toFixed(4)}</td>
+      <td style="color:${fc};font-weight:600">${r.ai_flood_detected ? 'YES' : 'No'}</td>
+      <td><span class="severity ${sevClass(r.ai_severity)}">${r.ai_severity}</span></td>
+      <td style="font-family:var(--mono)">${(r.ai_confidence * 100).toFixed(0)}%</td>
+      <td style="font-family:var(--mono)">${r.ai_estimated_extent_km2.toFixed(1)}</td>
+      <td style="font-family:var(--mono)">${r.flood_signal_strength.toFixed(3)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('agent1-body').innerHTML = html;
 }
 
 // Init

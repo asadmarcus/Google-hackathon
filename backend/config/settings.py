@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # Google Maps API
     GOOGLE_MAPS_API_KEY: str = ""  # Get from https://console.cloud.google.com
 
+    # Google Gemini (GeoGemma) API
+    GOOGLE_API_KEY: str = ""  # Gemini API key for satellite image analysis
+
+    # Google Earth Engine
+    GEE_PROJECT_ID: str = ""  # GEE project ID
+    GEE_SERVICE_ACCOUNT: str = ""  # Service account email
+    GEE_CREDENTIALS_PATH: str = ""  # Path to service account JSON key
+
     # Firebase
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_CREDENTIALS_PATH: str = ""  # Path to service account JSON

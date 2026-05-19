@@ -27,3 +27,7 @@ numpy==1.26.0
 # Utilities
 python-dotenv==1.0.1
 python-multipart==0.0.9
+
+# Agent 1 - Imagery & Geospatial
+earthengine-api==0.1.411
+google-auth==2.29.0
