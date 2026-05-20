@@ -2,10 +2,11 @@
 class ApiConfig {
   // Change this to your deployed URL or local IP
   // static const String baseUrl = 'http://localhost:8000'; // Web / desktop
-  static const String baseUrl = 'http://10.0.2.2:8000'; // Android emulator
-  // static const String baseUrl = 'https://your-cloud-run-url.run.app'; // Production
+  // static const String baseUrl = 'http://10.0.2.2:8000'; // Android emulator
+  static const String baseUrl =
+      'https://aliarman99-ciro-be.hf.space'; // Production
 
-  static const String wsUrl = 'ws://10.0.2.2:8000/ws/signals';
+  static const String wsUrl = 'ws://aliarman99-ciro-be.hf.space/ws/signals';
 
   // Agent endpoints
   static const String agent1 = '$baseUrl/api/v1/agent1';
